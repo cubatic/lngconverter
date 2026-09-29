@@ -78,15 +78,21 @@ def _fit_duration(source: Path, output: Path, duration: float) -> None:
         text=True,
     )
     source_duration = max(float(probe.stdout.strip()), 0.01)
-    tempo = source_duration / max(duration, 0.1)
+    # Never slow a natural delivery merely to fill silence, and avoid the
+    # chipmunk effect caused by forcing a long translation into a tiny slot.
+    tempo = min(max(source_duration / max(duration, 0.1), 1.0), 1.3)
+    output_duration = max(duration, source_duration / tempo)
     filters: list[str] = []
     while tempo > 2:
         filters.append("atempo=2")
         tempo /= 2
-    while tempo < 0.5:
-        filters.append("atempo=0.5")
-        tempo /= 0.5
-    filters.extend([f"atempo={tempo:.6f}", f"apad=whole_dur={duration:.3f}", f"atrim=0:{duration:.3f}"])
+    filters.extend(
+        [
+            f"atempo={tempo:.6f}",
+            f"apad=whole_dur={output_duration:.3f}",
+            f"atrim=0:{output_duration:.3f}",
+        ]
+    )
     _run(
         [
             "ffmpeg",
@@ -153,7 +159,9 @@ def create_dubbed_audio(
         raw = work_dir / f"speech-{index:03d}-raw.wav"
         fitted = work_dir / f"speech-{index:03d}.wav"
         _synthesize(segment.hindi_text, raw, settings)
-        _fit_duration(raw, fitted, segment.end - segment.start)
+        next_start = dialogue[index].start if index < len(dialogue) else segment.end
+        available = max(segment.end - segment.start, next_start - segment.start - 0.1)
+        _fit_duration(raw, fitted, available)
         inputs.extend(["-i", str(fitted)])
         delay_ms = max(0, round(segment.start * 1000))
         label = f"voice{index}"

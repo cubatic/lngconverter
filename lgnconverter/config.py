@@ -22,12 +22,13 @@ class Settings(BaseSettings):
     tts_model: str = "ai4bharat/indic-parler-tts"
     tts_device: str = "auto"
     tts_voice_description: str = (
-        "Rohit speaks Hindi in a clear, expressive, cinematic voice at a moderate pace. "
+        "Divya speaks Hindi in a natural, expressive female voice at a moderate pace, "
+        "with realistic changes in emphasis and intensity. "
         "The recording is very high quality, close-sounding, and has no background noise."
     )
     enable_source_separation: bool = False
-    background_volume: float = 0.35
-    dialogue_volume: float = 1.8
+    background_volume: float = 0.5
+    dialogue_volume: float = 1.65
     api_key: str = ""
     worker_api_key: str = ""
     ingest_api_key: str = ""
