@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import FileResponse
 
 from .config import Settings, get_settings
@@ -23,34 +23,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/", include_in_schema=False)
     def browser_prototype():
         return FileResponse(WEB_DIR / "index.html")
-
-    @app.post("/v1/capture-sessions", status_code=status.HTTP_201_CREATED)
-    def create_capture_session():
-        from uuid import uuid4
-
-        session_id = uuid4().hex
-        (active_settings.artifact_dir / "captures" / session_id).mkdir(parents=True, exist_ok=True)
-        return {"session_id": session_id}
-
-    @app.post("/v1/capture-sessions/{session_id}/chunks/{sequence}")
-    async def upload_capture_chunk(session_id: str, sequence: int, request: Request):
-        if len(session_id) != 32 or any(character not in "0123456789abcdef" for character in session_id):
-            raise HTTPException(status_code=422, detail="Invalid capture session ID")
-        if sequence < 0:
-            raise HTTPException(status_code=422, detail="Sequence must be non-negative")
-        session_dir = active_settings.artifact_dir / "captures" / session_id
-        if not session_dir.is_dir():
-            raise HTTPException(status_code=404, detail="Capture session not found")
-        body = await request.body()
-        if not body:
-            raise HTTPException(status_code=422, detail="Empty audio chunk")
-        if len(body) > active_settings.max_capture_bytes:
-            raise HTTPException(status_code=413, detail="Audio chunk is too large")
-        content_type = request.headers.get("content-type", "").split(";", 1)[0]
-        extension = {"audio/webm": "webm", "audio/mp4": "m4a"}.get(content_type, "bin")
-        chunk_path = session_dir / f"{sequence:06d}.{extension}"
-        chunk_path.write_bytes(body)
-        return {"sequence": sequence, "bytes": len(body), "stored": True}
 
     @app.post("/v1/jobs", response_model=Job, status_code=status.HTTP_202_ACCEPTED)
     def create_job(request: CreateJobRequest):
