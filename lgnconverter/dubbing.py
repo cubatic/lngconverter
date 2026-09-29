@@ -258,12 +258,15 @@ def create_dubbed_audio(
     for index, segment in enumerate(dialogue, start=1):
         raw = work_dir / f"speech-{index:03d}-raw.wav"
         fitted = work_dir / f"speech-{index:03d}.wav"
-        profile = _analyze_prosody(vocals, segment)
+        description = settings.tts_voice_description
+        if settings.enable_prosody_prompts:
+            profile = _analyze_prosody(vocals, segment)
+            description = _prosody_description(profile, settings)
         _synthesize(
             segment.hindi_text,
             raw,
             settings,
-            _prosody_description(profile, settings),
+            description,
         )
         next_start = dialogue[index].start if index < len(dialogue) else segment.end
         available = max(segment.end - segment.start, next_start - segment.start - 0.1)
