@@ -78,3 +78,9 @@ Kaggle users can import this notebook from GitHub:
 ```
 
 Do not put account passwords, cookies, or tokens in the repository or notebook.
+
+## VPS deployment
+
+Version-controlled Apache and systemd templates are available in [`deploy/`](deploy/).
+The API binds to localhost port `4600`; Apache terminates HTTPS and proxies the public
+subdomain to it. AI translation and TTS remain separate GPU-worker responsibilities.
