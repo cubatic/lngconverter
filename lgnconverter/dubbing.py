@@ -270,7 +270,6 @@ def create_dubbed_audio(
         label = f"voice{index}"
         filter_parts.append(
             f"[{index}:a]volume={settings.dialogue_volume:.3f},"
-            f"acompressor=threshold=0.12:ratio=3:attack=5:release=80,"
             f"adelay={delay_ms}|{delay_ms}[{label}]"
         )
         mix_labels.append(f"[{label}]")
