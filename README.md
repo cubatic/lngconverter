@@ -19,7 +19,7 @@ larger models.
 
 ## Run locally or in Colab
 
-Python 3.11 is recommended. FFmpeg must be installed.
+Python 3.11–3.13 is supported for this stage. FFmpeg must be installed.
 
 ```bash
 python -m venv .venv
