@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>LGN Converter – Hindi Player</title>
   <style>
-    :root{color-scheme:dark;font-family:Inter,system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;background:#080c16;color:#eef3ff}main{width:min(1050px,calc(100% - 32px));margin:32px auto}.panel{background:#111827;border:1px solid #29334a;border-radius:18px;padding:22px}h1{margin:0 0 8px}.hint{color:#aeb8cf;line-height:1.5}.row{display:grid;grid-template-columns:1fr 160px 90px 90px auto;gap:10px;margin-top:18px}input,button{border-radius:10px;padding:12px;font:inherit}input{min-width:0;background:#080c16;color:inherit;border:1px solid #3b4662}button{border:0;background:#6d7cff;color:white;font-weight:750;cursor:pointer}button:disabled{opacity:.45;cursor:wait}iframe{width:100%;aspect-ratio:16/9;border:0;border-radius:12px;margin-top:18px;background:#000}#status{margin-top:16px;padding:12px;background:#080c16;border-radius:10px;white-space:pre-wrap}#transcript{margin-top:12px;max-height:280px;overflow:auto}.segment{display:grid;grid-template-columns:120px 1fr;gap:12px;padding:9px 4px;border-bottom:1px solid #263047}.time{color:#8ca0c8;font-variant-numeric:tabular-nums}@media(max-width:760px){.row{grid-template-columns:1fr 1fr}.row input:first-child{grid-column:1/-1}}
+    :root{color-scheme:dark;font-family:Inter,system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;background:#080c16;color:#eef3ff}main{width:min(1050px,calc(100% - 32px));margin:32px auto}.panel{background:#111827;border:1px solid #29334a;border-radius:18px;padding:22px}h1{margin:0 0 8px}.hint{color:#aeb8cf;line-height:1.5}.row{display:grid;grid-template-columns:1fr 160px 90px 90px auto auto;gap:10px;margin-top:18px}input,button{border-radius:10px;padding:12px;font:inherit}input{min-width:0;background:#080c16;color:inherit;border:1px solid #3b4662}button{border:0;background:#6d7cff;color:white;font-weight:750;cursor:pointer}button:disabled{opacity:.45;cursor:wait}iframe{width:100%;aspect-ratio:16/9;border:0;border-radius:12px;margin-top:18px;background:#000}#status{margin-top:16px;padding:12px;background:#080c16;border-radius:10px;white-space:pre-wrap}#transcript{margin-top:12px;max-height:280px;overflow:auto}.segment{display:grid;grid-template-columns:120px 1fr;gap:12px;padding:9px 4px;border-bottom:1px solid #263047}.time{color:#8ca0c8;font-variant-numeric:tabular-nums}@media(max-width:760px){.row{grid-template-columns:1fr 1fr}.row input:first-child{grid-column:1/-1}}
   </style>
 </head>
 <body><main><section class="panel">
@@ -15,7 +15,8 @@
     <input id="apiKey" type="password" placeholder="Access key" aria-label="API access key">
     <input id="start" type="number" min="0" value="0" aria-label="Start seconds">
     <input id="duration" type="number" min="1" max="180" value="30" aria-label="Duration seconds">
-    <button id="prepare">Prepare Hindi</button>
+    <button id="prepare">Start Hindi</button>
+    <button id="stop" disabled>Stop</button>
   </div>
   <div id="player"></div>
   <audio id="dubbed" controls hidden></audio>
@@ -23,35 +24,88 @@
 </section></main>
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
-const e={url:document.querySelector('#url'),apiKey:document.querySelector('#apiKey'),start:document.querySelector('#start'),duration:document.querySelector('#duration'),prepare:document.querySelector('#prepare'),player:document.querySelector('#player'),dubbed:document.querySelector('#dubbed'),status:document.querySelector('#status'),transcript:document.querySelector('#transcript')};
+const e={url:document.querySelector('#url'),apiKey:document.querySelector('#apiKey'),start:document.querySelector('#start'),duration:document.querySelector('#duration'),prepare:document.querySelector('#prepare'),stop:document.querySelector('#stop'),player:document.querySelector('#player'),dubbed:document.querySelector('#dubbed'),status:document.querySelector('#status'),transcript:document.querySelector('#transcript')};
 function videoId(value){const url=new URL(value);return url.hostname==='youtu.be'?url.pathname.slice(1):url.searchParams.get('v')}
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-let player=null,currentJob=null;
+const terminal=new Set(['completed','failed','cancelled']);
+const chunkSeconds=20,prefetchCount=2;
+let player=null,chunks=[],runToken=0,currentIndex=-1,playbackStarted=false,suppressPauseUntil=0,syncTimer=null;
 const apiReady=new Promise(resolve=>{window.onYouTubeIframeAPIReady=resolve});
 e.apiKey.value=sessionStorage.getItem('lgnApiKey')||'';
 const authHeaders=()=>({'x-lgn-api-key':e.apiKey.value.trim()});
-async function control(action){if(!currentJob)return;const response=await fetch(`/v1/jobs/${currentJob.id}/${action}`,{method:'POST',headers:authHeaders()});if(response.ok)currentJob=await response.json()}
-async function playerState(event){
-  if(event.data===YT.PlayerState.PAUSED){e.dubbed.pause();await control('pause')}
-  if(event.data===YT.PlayerState.PLAYING){if(e.dubbed.src&&e.dubbed.paused)e.dubbed.play().catch(()=>{});if(currentJob?.status==='paused')await control('resume')}
-  if(event.data===YT.PlayerState.ENDED)await control('cancel');
+async function controlJob(record,action){
+  if(!record.job||terminal.has(record.job.status))return;
+  const response=await fetch(`/v1/jobs/${record.job.id}/${action}`,{method:'POST',headers:authHeaders()});
+  if(response.ok)record.job=await response.json();
 }
-e.prepare.addEventListener('click',async()=>{e.prepare.disabled=true;e.transcript.replaceChildren();try{
+async function controlActive(action){await Promise.all(chunks.map(record=>controlJob(record,action)))}
+function updateStatus(extra=''){
+  const ready=chunks.filter(record=>record.job?.status==='completed').length;
+  const active=chunks.filter(record=>record.job&&!terminal.has(record.job.status)).map(record=>`${record.index+1}:${record.job.status}`).join(', ');
+  e.status.textContent=`Hindi chunks ready: ${ready}/${chunks.length}${active?`\nActive: ${active}`:''}${extra?`\n${extra}`:''}`;
+}
+async function playerState(event){
+  if(event.data===YT.PlayerState.PAUSED&&Date.now()>suppressPauseUntil){e.dubbed.pause();await controlActive('pause');updateStatus('Paused — GPU work paused.')}
+  if(event.data===YT.PlayerState.PLAYING){
+    if(!playbackStarted){suppressPauseUntil=Date.now()+1000;player.pauseVideo();return}
+    await controlActive('resume');if(e.dubbed.src&&e.dubbed.paused)e.dubbed.play().catch(()=>{});updateStatus();
+  }
+  if(event.data===YT.PlayerState.ENDED)await stopRun();
+}
+async function createChunk(record,sourceUrl,token){
+  if(record.promise)return record.promise;
+  record.promise=(async()=>{
+    const response=await fetch('/v1/jobs',{method:'POST',headers:{'content-type':'application/json',...authHeaders()},body:JSON.stringify({source_url:sourceUrl,authorization_confirmed:true,source_language:'zh',target_language:'hi',clip_start_seconds:record.start,clip_duration_seconds:record.duration})});
+    if(!response.ok)throw new Error(await response.text());record.job=await response.json();updateStatus();
+    while(!terminal.has(record.job.status)){
+      await wait(2000);if(token!==runToken)throw new Error('Stopped');
+      const poll=await fetch(`/v1/jobs/${record.job.id}`,{headers:authHeaders()});if(!poll.ok)throw new Error(await poll.text());record.job=await poll.json();updateStatus();
+    }
+    if(record.job.status==='failed')throw new Error(record.job.error||'Chunk processing failed');
+    if(record.job.status==='cancelled')throw new Error('Stopped');
+    const audioResponse=await fetch(`/v1/jobs/${record.job.id}/dubbed-audio`,{headers:authHeaders()});
+    if(!audioResponse.ok)throw new Error(await audioResponse.text());record.audioUrl=URL.createObjectURL(await audioResponse.blob());
+    renderTranscript(record);updateStatus();
+    const next=record.index+prefetchCount;if(next<chunks.length)createChunk(chunks[next],sourceUrl,token).catch(error=>failRun(error,token));
+    return record;
+  })();
+  return record.promise;
+}
+function renderTranscript(record){
+  const hindi=new Map(record.job.hindi_dialogue.map(segment=>[`${segment.start}:${segment.end}`,segment.hindi_text]));
+  for(const segment of record.job.transcript){
+    const row=document.createElement('div'),time=document.createElement('span'),text=document.createElement('span');row.className='segment';time.className='time';
+    time.textContent=`${(record.start+segment.start).toFixed(2)}–${(record.start+segment.end).toFixed(2)}`;const translated=hindi.get(`${segment.start}:${segment.end}`);
+    text.textContent=translated?`${segment.text}\n${translated}`:segment.text;text.style.whiteSpace='pre-line';row.append(time,text);e.transcript.append(row);
+  }
+}
+async function playChunk(index,token){
+  if(index>=chunks.length||token!==runToken){await stopRun(false);return}
+  currentIndex=index;const record=chunks[index];
+  if(index>0){suppressPauseUntil=Date.now()+1500;player.pauseVideo()}
+  if(!record.audioUrl)updateStatus(`Buffering chunk ${index+1}…`);
+  await record.promise;if(token!==runToken)return;
+  e.dubbed.src=record.audioUrl;e.dubbed.hidden=false;e.dubbed.currentTime=0;
+  suppressPauseUntil=Date.now()+1500;player.seekTo(record.start,true);await e.dubbed.play();player.playVideo();playbackStarted=true;updateStatus(`Playing chunk ${index+1}/${chunks.length}`);
+  e.dubbed.onended=()=>playChunk(index+1,token).catch(error=>failRun(error,token));
+}
+async function stopRun(showStatus=true){
+  const oldToken=runToken++;playbackStarted=false;currentIndex=-1;clearInterval(syncTimer);syncTimer=null;e.dubbed.pause();e.dubbed.removeAttribute('src');e.dubbed.load();
+  if(player){suppressPauseUntil=Date.now()+1000;player.pauseVideo()}
+  await controlActive('cancel');for(const record of chunks)if(record.audioUrl)URL.revokeObjectURL(record.audioUrl);
+  chunks=[];e.stop.disabled=true;e.prepare.disabled=false;if(showStatus&&oldToken)e.status.textContent='Stopped · queued GPU work cancelled.';
+}
+function failRun(error,token){if(token!==runToken||error.message==='Stopped')return;e.status.textContent=`Processing failed: ${error.message}`;stopRun(false)}
+e.stop.addEventListener('click',()=>stopRun());
+e.prepare.addEventListener('click',async()=>{await stopRun(false);e.prepare.disabled=true;e.stop.disabled=false;e.transcript.replaceChildren();try{
   const sourceUrl=e.url.value.trim(),id=videoId(sourceUrl),start=Number(e.start.value),duration=Number(e.duration.value);
   if(!e.apiKey.value.trim())throw new Error('Access key is required');sessionStorage.setItem('lgnApiKey',e.apiKey.value.trim());
   if(!id)throw new Error('No YouTube video ID found');if(start<0||duration<1||duration>180)throw new Error('Use a duration from 1 to 180 seconds');
-  if(currentJob&&!['completed','failed','cancelled'].includes(currentJob.status))await control('cancel');
-  await apiReady;
-  if(player)player.destroy();
-  player=new YT.Player('player',{videoId:id,playerVars:{autoplay:1,mute:1,start:Math.floor(start)},events:{onReady:event=>{event.target.mute();event.target.playVideo()},onStateChange:playerState}});
-  e.status.textContent='Creating processing job…';
-  const response=await fetch('/v1/jobs',{method:'POST',headers:{'content-type':'application/json',...authHeaders()},body:JSON.stringify({source_url:sourceUrl,authorization_confirmed:true,source_language:'zh',target_language:'hi',clip_start_seconds:start,clip_duration_seconds:duration})});
-  if(!response.ok)throw new Error(await response.text());currentJob=await response.json();
-  while(!['completed','failed','cancelled'].includes(currentJob.status)){e.status.textContent=`Job ${currentJob.id}\nStatus: ${currentJob.status}\nPause video to pause processing; resume video to continue.`;await wait(3000);currentJob=await(await fetch(`/v1/jobs/${currentJob.id}`,{headers:authHeaders()})).json()}
-  if(currentJob.status==='failed')throw new Error(currentJob.error);if(currentJob.status==='cancelled'){e.status.textContent='Playback stopped · processing cancelled.';return}
-  const job=currentJob;e.status.textContent=`Hindi dub complete · ${job.duration_seconds.toFixed(2)}s · language ${job.detected_language}`;
-  if(job.has_dubbed_audio){const audioResponse=await fetch(`/v1/jobs/${job.id}/dubbed-audio`,{headers:authHeaders()});if(!audioResponse.ok)throw new Error(await audioResponse.text());e.dubbed.src=URL.createObjectURL(await audioResponse.blob());e.dubbed.hidden=false;player.seekTo(start,true);e.dubbed.currentTime=0;await e.dubbed.play();player.playVideo()}
-  const hindi=new Map(job.hindi_dialogue.map(segment=>[`${segment.start}:${segment.end}`,segment.hindi_text]));
-  for(const segment of job.transcript){const row=document.createElement('div'),time=document.createElement('span'),text=document.createElement('span');row.className='segment';time.className='time';time.textContent=`${segment.start.toFixed(2)}–${segment.end.toFixed(2)}`;const translated=hindi.get(`${segment.start}:${segment.end}`);text.textContent=translated?`${segment.text}\n${translated}`:segment.text;text.style.whiteSpace='pre-line';row.append(time,text);e.transcript.append(row)}
-}catch(error){e.status.textContent=`Processing failed: ${error.message}`}finally{e.prepare.disabled=false}});
+  const token=runToken;for(let offset=0,index=0;offset<duration;offset+=chunkSeconds,index++)chunks.push({index,start:start+offset,duration:Math.min(chunkSeconds,duration-offset),job:null,promise:null,audioUrl:null});
+  await apiReady;if(player)player.destroy();
+  await new Promise(resolve=>{player=new YT.Player('player',{videoId:id,playerVars:{autoplay:0,mute:1,start:Math.floor(start)},events:{onReady:event=>{event.target.mute();event.target.pauseVideo();resolve()},onStateChange:playerState}})});
+  e.status.textContent='Preparing first Hindi chunk…';for(let index=0;index<Math.min(prefetchCount,chunks.length);index++)createChunk(chunks[index],sourceUrl,token).catch(error=>failRun(error,token));
+  syncTimer=setInterval(()=>{if(!playbackStarted||e.dubbed.paused||currentIndex<0)return;const expected=chunks[currentIndex].start+e.dubbed.currentTime;if(Math.abs(player.getCurrentTime()-expected)>.75)player.seekTo(expected,true)},1000);
+  await playChunk(0,token);
+}catch(error){failRun(error,runToken)}});
 </script></body></html>
