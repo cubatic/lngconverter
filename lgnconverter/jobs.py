@@ -55,6 +55,7 @@ class JobStore:
                 audio_path,
                 job.clip_start_seconds,
                 min(job.clip_duration_seconds, self.settings.max_source_seconds),
+                self.settings.decode_timeout_seconds,
             )
             transcript, detected_language = transcribe(
                 audio_path, self.settings, job.source_language

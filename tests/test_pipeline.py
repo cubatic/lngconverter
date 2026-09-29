@@ -28,7 +28,11 @@ def test_extract_audio_from_media_stream(tmp_path):
         pytest.skip("FFmpeg is not installed")
 
     duration = extract_audio(
-        ResolvedSource(media_url=str(source_path)), output_path, start_seconds=0, duration_seconds=3
+        ResolvedSource(media_url=str(source_path)),
+        output_path,
+        start_seconds=0,
+        duration_seconds=3,
+        timeout_seconds=30,
     )
 
     assert output_path.exists()

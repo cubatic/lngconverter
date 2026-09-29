@@ -17,6 +17,7 @@ def extract_audio(
     output_path: Path,
     start_seconds: float,
     duration_seconds: float,
+    timeout_seconds: int = 900,
 ) -> float | None:
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         raise PipelineError("FFmpeg and ffprobe must be installed")
@@ -50,7 +51,7 @@ def extract_audio(
             check=True,
             capture_output=True,
             text=True,
-            timeout=duration_seconds + 90,
+            timeout=timeout_seconds,
         )
     except subprocess.CalledProcessError as exc:
         raise PipelineError(exc.stderr.strip() or "FFmpeg could not decode the source") from exc

@@ -13,10 +13,10 @@ class Settings(BaseSettings):
     whisper_device: str = "auto"
     whisper_compute_type: str = "auto"
     max_source_seconds: int = 180
+    decode_timeout_seconds: int = 900
     keep_audio_artifacts: bool = True
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
