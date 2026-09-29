@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -24,6 +25,18 @@ def extract_audio(
         raise PipelineError("FFmpeg and ffprobe must be installed")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if source.kind == "youtube" and source.page_url:
+        _extract_youtube_range(
+            source.page_url,
+            output_path,
+            start_seconds,
+            duration_seconds,
+            timeout_seconds,
+        )
+        return _probe_and_validate_duration(
+            source, output_path, start_seconds, duration_seconds
+        )
+
     command = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
     if urlparse(source.media_url).scheme in {"http", "https"}:
         command.extend(
@@ -74,6 +87,76 @@ def extract_audio(
     except subprocess.TimeoutExpired as exc:
         raise PipelineError("Source decoding timed out") from exc
 
+    return _probe_and_validate_duration(source, output_path, start_seconds, duration_seconds)
+
+
+def _extract_youtube_range(
+    page_url: str,
+    output_path: Path,
+    start_seconds: float,
+    duration_seconds: float,
+    timeout_seconds: int,
+) -> None:
+    end_seconds = start_seconds + duration_seconds
+    template = output_path.parent / "youtube-section.%(ext)s"
+    section_wav = output_path.parent / "youtube-section.wav"
+    command = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "--no-playlist",
+        "--no-progress",
+        "--force-overwrites",
+        "--download-sections",
+        f"*{start_seconds}-{end_seconds}",
+        "--format",
+        "bestaudio",
+        "--extract-audio",
+        "--audio-format",
+        "wav",
+        "--output",
+        str(template),
+        page_url,
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout_seconds)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(section_wav),
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-c:a",
+                "pcm_s16le",
+                str(output_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise PipelineError(exc.stderr.strip() or "YouTube range extraction failed") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise PipelineError("YouTube range extraction timed out") from exc
+    finally:
+        section_wav.unlink(missing_ok=True)
+
+
+def _probe_and_validate_duration(
+    source: ResolvedSource,
+    output_path: Path,
+    start_seconds: float,
+    duration_seconds: float,
+) -> float:
     probe = subprocess.run(
         [
             "ffprobe",

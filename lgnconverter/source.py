@@ -15,6 +15,8 @@ class SourceError(ValueError):
 @dataclass(frozen=True)
 class ResolvedSource:
     media_url: str
+    page_url: str | None = None
+    kind: str = "direct"
     title: str | None = None
     duration: float | None = None
     http_headers: dict[str, str] | None = None
@@ -78,6 +80,8 @@ def resolve_source(url: str, settings: Settings) -> ResolvedSource:
         raise SourceError("No playable audio stream was found")
     return ResolvedSource(
         media_url=media_url,
+        page_url=url,
+        kind="youtube",
         title=info.get("title"),
         duration=duration,
         http_headers=info.get("http_headers"),
