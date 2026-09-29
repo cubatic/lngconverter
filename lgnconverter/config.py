@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     background_volume: float = 0.25
     dialogue_volume: float = 2.0
     enable_prosody_prompts: bool = False
+    tts_batch_size: int = 4
     api_key: str = ""
     worker_api_key: str = ""
     ingest_api_key: str = ""

@@ -34,9 +34,9 @@ def _load_tts(model_name: str, device_name: str):
     model = ParlerTTSForConditionalGeneration.from_pretrained(
         model_name, torch_dtype=dtype
     ).to(device)
-    prompt_tokenizer = AutoTokenizer.from_pretrained(model_name)
+    prompt_tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
     description_tokenizer = AutoTokenizer.from_pretrained(
-        model.config.text_encoder._name_or_path
+        model.config.text_encoder._name_or_path, padding_side="left"
     )
     return model, prompt_tokenizer, description_tokenizer, device
 
@@ -53,6 +53,17 @@ class ProsodyProfile:
 def _synthesize(
     text: str, output_path: Path, settings: Settings, description: str | None = None
 ) -> None:
+    _synthesize_batch(
+        [text], [output_path], settings, [description or settings.tts_voice_description]
+    )
+
+
+def _synthesize_batch(
+    texts: list[str],
+    output_paths: list[Path],
+    settings: Settings,
+    descriptions: list[str],
+) -> None:
     try:
         import soundfile as sf
         import torch
@@ -63,17 +74,21 @@ def _synthesize(
         settings.tts_model, settings.tts_device
     )
     description = description_tokenizer(
-        description or settings.tts_voice_description, return_tensors="pt"
+        descriptions, return_tensors="pt", padding=True
     ).to(device)
-    prompt = tokenizer(text, return_tensors="pt").to(device)
+    prompt = tokenizer(texts, return_tensors="pt", padding=True).to(device)
     with torch.inference_mode():
         generation = model.generate(
             input_ids=description.input_ids,
             attention_mask=description.attention_mask,
             prompt_input_ids=prompt.input_ids,
             prompt_attention_mask=prompt.attention_mask,
+            return_dict_in_generate=True,
         )
-    sf.write(output_path, generation.float().cpu().numpy().squeeze(), model.config.sampling_rate)
+    for index, output_path in enumerate(output_paths):
+        audio_length = int(generation.audios_length[index])
+        audio = generation.sequences[index, :audio_length].float().cpu().numpy().squeeze()
+        sf.write(output_path, audio, model.config.sampling_rate)
 
 
 def _fit_duration(source: Path, output: Path, duration: float) -> None:
@@ -255,19 +270,29 @@ def create_dubbed_audio(
     filter_parts: list[str] = []
     filter_parts.append(f"[0:a]volume={settings.background_volume:.3f}[background]")
     mix_labels = ["[background]"]
+    raw_paths: list[Path] = []
+    descriptions: list[str] = []
     for index, segment in enumerate(dialogue, start=1):
         raw = work_dir / f"speech-{index:03d}-raw.wav"
-        fitted = work_dir / f"speech-{index:03d}.wav"
         description = settings.tts_voice_description
         if settings.enable_prosody_prompts:
             profile = _analyze_prosody(vocals, segment)
             description = _prosody_description(profile, settings)
-        _synthesize(
-            segment.hindi_text,
-            raw,
+        raw_paths.append(raw)
+        descriptions.append(description)
+    batch_size = max(1, settings.tts_batch_size)
+    for offset in range(0, len(dialogue), batch_size):
+        batch = dialogue[offset : offset + batch_size]
+        _synthesize_batch(
+            [segment.hindi_text for segment in batch],
+            raw_paths[offset : offset + batch_size],
             settings,
-            description,
+            descriptions[offset : offset + batch_size],
         )
+
+    for index, segment in enumerate(dialogue, start=1):
+        raw = raw_paths[index - 1]
+        fitted = work_dir / f"speech-{index:03d}.wav"
         next_start = dialogue[index].start if index < len(dialogue) else segment.end
         available = max(segment.end - segment.start, next_start - segment.start - 0.1)
         _fit_duration(raw, fitted, available)
