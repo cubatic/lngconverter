@@ -63,8 +63,13 @@ async function createChunk(record,sourceUrl,token){
     }
     if(record.job.status==='failed')throw new Error(record.job.error||'Chunk processing failed');
     if(record.job.status==='cancelled')throw new Error('Stopped');
-    const audioResponse=await fetch(`/v1/jobs/${record.job.id}/dubbed-audio`,{headers:authHeaders()});
-    if(!audioResponse.ok)throw new Error(await audioResponse.text());record.audioUrl=URL.createObjectURL(await audioResponse.blob());
+    let audioResponse=null;
+    for(let attempt=0;attempt<10;attempt++){
+      audioResponse=await fetch(`/v1/jobs/${record.job.id}/dubbed-audio`,{headers:authHeaders()});
+      if(audioResponse.ok)break;if(audioResponse.status!==409)throw new Error(await audioResponse.text());
+      updateStatus(`Audio upload finishing for chunk ${record.index+1}…`);await wait(1000);if(token!==runToken)throw new Error('Stopped');
+    }
+    if(!audioResponse?.ok)throw new Error('Dubbed audio was not produced for this chunk');record.audioUrl=URL.createObjectURL(await audioResponse.blob());
     renderTranscript(record);updateStatus();
     const next=record.index+prefetchCount;if(next<chunks.length)createChunk(chunks[next],sourceUrl,token).catch(error=>failRun(error,token));
     return record;

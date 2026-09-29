@@ -1,4 +1,5 @@
 import sqlite3
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -231,6 +232,36 @@ class JobStore:
             return claimed.model_copy(deep=True)
 
     def complete_remote(self, job_id: str, result: WorkerResult) -> Job | None:
+        dubbed_path = self.dubbed_audio_path(job_id)
+        if not dubbed_path.is_file() and not result.hindi_dialogue:
+            source_path = self.audio_path(job_id)
+            completed = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(source_path),
+                    "-vn",
+                    "-ar",
+                    "44100",
+                    "-ac",
+                    "2",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    str(dubbed_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode:
+                raise RuntimeError(completed.stderr.strip() or "Could not preserve source audio")
         with self._lock:
             job = self._jobs.get(job_id)
             if not job:
@@ -244,6 +275,7 @@ class JobStore:
                     "duration_seconds": result.duration_seconds,
                     "transcript": result.transcript,
                     "hindi_dialogue": result.hindi_dialogue,
+                    "has_dubbed_audio": dubbed_path.is_file(),
                     "stage_timings": result.stage_timings,
                     "updated_at": datetime.now(UTC),
                     "error": None,

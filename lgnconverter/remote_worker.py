@@ -66,7 +66,7 @@ class RemoteWorker:
                 self.settings,
             )
             timings["translation"] = round(time.monotonic() - stage_started, 3)
-            if self.settings.enable_tts and hindi_dialogue:
+            if self.settings.enable_tts:
                 dubbed_path = self.work_dir / f"{job_id}-hindi.m4a"
                 timings.update(create_dubbed_audio(
                     audio_path, hindi_dialogue, dubbed_path, self.settings

@@ -257,7 +257,34 @@ def create_dubbed_audio(
     settings: Settings,
 ) -> dict[str, float]:
     if not dialogue:
-        raise PipelineError("No Hindi dialogue is available for TTS")
+        started = time.monotonic()
+        _run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source_audio),
+                "-vn",
+                "-ar",
+                "44100",
+                "-ac",
+                "2",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                str(output_path),
+            ]
+        )
+        return {
+            "separation": 0.0,
+            "tts": 0.0,
+            "mixing": round(time.monotonic() - started, 3),
+        }
     work_dir = output_path.parent / "dub-work"
     work_dir.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
