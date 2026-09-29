@@ -130,6 +130,7 @@ def _extract_youtube_range(
         sys.executable,
         "-m",
         "yt_dlp",
+        "--force-ipv4",
         "--no-playlist",
         "--no-progress",
         "--force-overwrites",
