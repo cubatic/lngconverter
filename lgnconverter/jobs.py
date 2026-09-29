@@ -8,6 +8,7 @@ from .config import Settings
 from .models import CreateJobRequest, Job, JobStatus
 from .pipeline import PipelineCancelled, extract_audio, transcribe
 from .source import resolve_source
+from .translation import translate_to_hindi
 
 
 class JobStore:
@@ -106,12 +107,21 @@ class JobStore:
             transcript, detected_language = transcribe(
                 audio_path, self.settings, job.source_language, cancel_event
             )
+            hindi_dialogue = []
+            if self.settings.enable_translation:
+                hindi_dialogue = translate_to_hindi(
+                    transcript,
+                    job.source_language or detected_language,
+                    self.settings,
+                    cancel_event,
+                )
             self._update(
                 job_id,
                 status=JobStatus.completed,
                 duration_seconds=duration,
                 transcript=transcript,
                 detected_language=detected_language,
+                hindi_dialogue=hindi_dialogue,
             )
         # A background worker must persist unexpected stage failures on the job
         # instead of silently terminating the executor future.

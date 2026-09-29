@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     max_source_seconds: int = 180
     decode_timeout_seconds: int = 900
     keep_audio_artifacts: bool = True
+    enable_translation: bool = False
+    translation_model: str = "facebook/nllb-200-distilled-600M"
+    translation_device: str = "cpu"
 
 
 @lru_cache

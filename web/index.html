@@ -45,6 +45,7 @@ e.prepare.addEventListener('click',async()=>{e.prepare.disabled=true;e.transcrip
   while(!['completed','failed','cancelled'].includes(currentJob.status)){e.status.textContent=`Job ${currentJob.id}\nStatus: ${currentJob.status}\nPause video to pause processing; resume video to continue.`;await wait(3000);currentJob=await(await fetch(`/v1/jobs/${currentJob.id}`)).json()}
   if(currentJob.status==='failed')throw new Error(currentJob.error);if(currentJob.status==='cancelled'){e.status.textContent='Playback stopped · processing cancelled.';return}
   const job=currentJob;e.status.textContent=`Analysis complete · ${job.duration_seconds.toFixed(2)}s · language ${job.detected_language}`;
-  for(const segment of job.transcript){const row=document.createElement('div'),time=document.createElement('span'),text=document.createElement('span');row.className='segment';time.className='time';time.textContent=`${segment.start.toFixed(2)}–${segment.end.toFixed(2)}`;text.textContent=segment.text;row.append(time,text);e.transcript.append(row)}
+  const hindi=new Map(job.hindi_dialogue.map(segment=>[`${segment.start}:${segment.end}`,segment.hindi_text]));
+  for(const segment of job.transcript){const row=document.createElement('div'),time=document.createElement('span'),text=document.createElement('span');row.className='segment';time.className='time';time.textContent=`${segment.start.toFixed(2)}–${segment.end.toFixed(2)}`;const translated=hindi.get(`${segment.start}:${segment.end}`);text.textContent=translated?`${segment.text}\n${translated}`:segment.text;text.style.whiteSpace='pre-line';row.append(time,text);e.transcript.append(row)}
 }catch(error){e.status.textContent=`Processing failed: ${error.message}`}finally{e.prepare.disabled=false}});
 </script></body></html>

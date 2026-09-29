@@ -30,6 +30,13 @@ class TranscriptSegment(BaseModel):
     text: str
 
 
+class TranslatedSegment(BaseModel):
+    start: float
+    end: float
+    source_text: str
+    hindi_text: str
+
+
 class Job(BaseModel):
     id: str
     status: JobStatus
@@ -41,6 +48,7 @@ class Job(BaseModel):
     detected_language: str | None = None
     duration_seconds: float | None = None
     transcript: list[TranscriptSegment] = Field(default_factory=list)
+    hindi_dialogue: list[TranslatedSegment] = Field(default_factory=list)
     error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
