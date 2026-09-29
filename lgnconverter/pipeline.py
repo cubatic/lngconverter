@@ -137,7 +137,7 @@ def _extract_youtube_range(
         f"*{start_seconds}-{end_seconds}",
         "--force-keyframes-at-cuts",
         "--format",
-        "bestaudio",
+        "140/234/233/bestaudio",
         "--extract-audio",
         "--audio-format",
         "wav",
