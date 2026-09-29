@@ -66,6 +66,10 @@ The ready-to-run notebook can be opened directly in Colab:
 
 [Open `01_stream_transcription_colab.ipynb` in Colab](https://colab.research.google.com/github/cubatic/lngconverter/blob/main/notebooks/01_stream_transcription_colab.ipynb)
 
+Kaggle users can import this notebook from GitHub:
+
+[`02_kaggle_stream_transcription.ipynb`](notebooks/02_kaggle_stream_transcription.ipynb)
+
 ```python
 !apt-get update -qq && apt-get install -y -qq ffmpeg
 !git clone YOUR_REPOSITORY_URL /content/Lgnconverter
