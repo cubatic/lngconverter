@@ -301,6 +301,10 @@ def create_dubbed_audio(
             "44100",
             "-ac",
             "2",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
             str(output_path),
         ]
     )

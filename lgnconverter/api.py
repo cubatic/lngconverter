@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         audio_path = store.dubbed_audio_path(job_id)
         if not audio_path.is_file():
             raise HTTPException(status_code=409, detail="Dubbed audio is not ready")
-        return FileResponse(audio_path, media_type="audio/wav", filename=f"{job_id}-hindi.wav")
+        return FileResponse(audio_path, media_type="audio/mp4", filename=f"{job_id}-hindi.m4a")
 
     @app.post(
         "/v1/jobs/{job_id}/pause", response_model=Job, dependencies=[Depends(require_client_key)]

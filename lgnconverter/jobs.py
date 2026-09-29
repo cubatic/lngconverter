@@ -168,7 +168,7 @@ class JobStore:
         return Path(self.settings.artifact_dir) / job_id / "source.wav"
 
     def dubbed_audio_path(self, job_id: str) -> Path:
-        return Path(self.settings.artifact_dir) / job_id / "dubbed.wav"
+        return Path(self.settings.artifact_dir) / job_id / "dubbed.m4a"
 
     def save_dubbed_audio(self, job_id: str, audio: bytes) -> Job | None:
         with self._lock:

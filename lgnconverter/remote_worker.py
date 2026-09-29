@@ -67,7 +67,7 @@ class RemoteWorker:
             )
             timings["translation"] = round(time.monotonic() - stage_started, 3)
             if self.settings.enable_tts and hindi_dialogue:
-                dubbed_path = self.work_dir / f"{job_id}-hindi.wav"
+                dubbed_path = self.work_dir / f"{job_id}-hindi.m4a"
                 timings.update(create_dubbed_audio(
                     audio_path, hindi_dialogue, dubbed_path, self.settings
                 ))
@@ -77,7 +77,7 @@ class RemoteWorker:
                         "PUT",
                         f"/v1/worker/jobs/{job_id}/dubbed-audio",
                         data=dubbed_file,
-                        headers={"content-type": "audio/wav"},
+                        headers={"content-type": "audio/mp4"},
                     )
                 timings["upload"] = round(time.monotonic() - stage_started, 3)
             payload = {
@@ -101,7 +101,7 @@ class RemoteWorker:
             raise
         finally:
             audio_path.unlink(missing_ok=True)
-            (self.work_dir / f"{job_id}-hindi.wav").unlink(missing_ok=True)
+            (self.work_dir / f"{job_id}-hindi.m4a").unlink(missing_ok=True)
         return True
 
     def run_forever(self, poll_seconds: float = 2) -> None:
