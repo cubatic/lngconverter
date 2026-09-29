@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     translation_device: str = "cpu"
     api_key: str = ""
     worker_api_key: str = ""
+    ingest_api_key: str = ""
     execution_mode: str = "local"
 
 

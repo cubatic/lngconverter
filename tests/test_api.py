@@ -1,5 +1,3 @@
-import time
-from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -56,38 +54,38 @@ def test_remote_worker_claims_and_completes_job(tmp_path):
                 artifact_dir=tmp_path,
                 api_key="client-key",
                 worker_api_key="worker-key",
+                ingest_api_key="ingest-key",
                 enable_youtube_source=True,
                 execution_mode="remote",
             )
         )
     )
-    with (
-        patch("lgnconverter.jobs.resolve_source"),
-        patch("lgnconverter.jobs.extract_audio", return_value=2),
-    ):
-        created = client.post(
-            "/v1/jobs",
-            headers={"x-lgn-api-key": "client-key"},
-            json={
-                "source_url": "https://youtu.be/authorized",
-                "authorization_confirmed": True,
-                "source_language": "zh",
-            },
-        )
-        assert created.status_code == 202
-        job_id = created.json()["id"]
-        denied = client.post("/v1/worker/jobs/claim")
-        assert denied.status_code == 401
-        claimed = None
-        for _ in range(20):
-            response = client.post(
-                "/v1/worker/jobs/claim", headers={"x-lgn-worker-key": "worker-key"}
-            )
-            if response.json() is not None:
-                claimed = response
-                break
-            time.sleep(0.01)
-    assert claimed is not None
+    created = client.post(
+        "/v1/jobs",
+        headers={"x-lgn-api-key": "client-key"},
+        json={
+            "source_url": "https://youtu.be/authorized",
+            "authorization_confirmed": True,
+            "source_language": "zh",
+        },
+    )
+    assert created.status_code == 202
+    job_id = created.json()["id"]
+    ingest = client.post(
+        "/v1/ingest/jobs/claim", headers={"x-lgn-ingest-key": "ingest-key"}
+    )
+    assert ingest.json()["id"] == job_id
+    uploaded = client.put(
+        f"/v1/ingest/jobs/{job_id}/audio?duration_seconds=2",
+        headers={"x-lgn-ingest-key": "ingest-key", "content-type": "audio/wav"},
+        content=b"test-wave",
+    )
+    assert uploaded.json()["status"] == "queued"
+    denied = client.post("/v1/worker/jobs/claim")
+    assert denied.status_code == 401
+    claimed = client.post(
+        "/v1/worker/jobs/claim", headers={"x-lgn-worker-key": "worker-key"}
+    )
     assert claimed.status_code == 200
     assert claimed.json()["id"] == job_id
     assert claimed.json()["status"] == "processing"

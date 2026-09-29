@@ -1,7 +1,7 @@
 import secrets
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
 from .config import Settings, get_settings
@@ -30,6 +30,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             x_lgn_worker_key, active_settings.worker_api_key
         ):
             raise HTTPException(status_code=401, detail="Invalid or missing worker key")
+
+    def require_ingest_key(x_lgn_ingest_key: str | None = Header(default=None)):
+        if not active_settings.ingest_api_key:
+            raise HTTPException(status_code=503, detail="Ingest API is not configured")
+        if not x_lgn_ingest_key or not secrets.compare_digest(
+            x_lgn_ingest_key, active_settings.ingest_api_key
+        ):
+            raise HTTPException(status_code=401, detail="Invalid or missing ingest key")
 
     @app.get("/health")
     def health():
@@ -145,6 +153,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dependencies=[Depends(require_worker_key)],
     )
     def fail_worker_job(job_id: str, failure: WorkerFailure):
+        job = store.fail_remote(job_id, failure.error)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
+
+    @app.post(
+        "/v1/ingest/jobs/claim",
+        response_model=Job | None,
+        dependencies=[Depends(require_ingest_key)],
+    )
+    def claim_ingest_job():
+        return store.claim_ingest()
+
+    @app.put(
+        "/v1/ingest/jobs/{job_id}/audio",
+        response_model=Job,
+        dependencies=[Depends(require_ingest_key)],
+    )
+    async def upload_ingest_audio(job_id: str, request: Request, duration_seconds: float):
+        audio = await request.body()
+        if not audio:
+            raise HTTPException(status_code=422, detail="Audio payload is empty")
+        if len(audio) > 100 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Audio payload exceeds 100 MB")
+        job = store.complete_ingest(job_id, audio, duration_seconds)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
+
+    @app.post(
+        "/v1/ingest/jobs/{job_id}/fail",
+        response_model=Job,
+        dependencies=[Depends(require_ingest_key)],
+    )
+    def fail_ingest_job(job_id: str, failure: WorkerFailure):
         job = store.fail_remote(job_id, failure.error)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, HttpUrl
 
 
 class JobStatus(str, Enum):
+    ingest_queued = "ingest_queued"
     ingesting = "ingesting"
     queued = "queued"
     processing = "processing"

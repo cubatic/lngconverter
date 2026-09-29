@@ -38,7 +38,12 @@ class JobStore:
             rows = connection.execute("SELECT payload FROM jobs").fetchall()
         for (payload,) in rows:
             job = Job.model_validate_json(payload)
-            if job.status in {JobStatus.ingesting, JobStatus.queued, JobStatus.processing}:
+            if job.status in {
+                JobStatus.ingest_queued,
+                JobStatus.ingesting,
+                JobStatus.queued,
+                JobStatus.processing,
+            }:
                 job = job.model_copy(update={"status": JobStatus.paused})
             self._jobs[job.id] = job
             self._cancel_events[job.id] = Event()
@@ -74,7 +79,7 @@ class JobStore:
         if self.settings.execution_mode == "local":
             self._executor.submit(self._run, job.id, cancel_event)
         else:
-            self._executor.submit(self._prepare_remote, job.id, cancel_event)
+            self._update(job.id, status=JobStatus.ingest_queued)
         return job.model_copy(deep=True)
 
     def get(self, job_id: str) -> Job | None:
@@ -87,7 +92,12 @@ class JobStore:
             job = self._jobs.get(job_id)
             if not job:
                 return None
-            if job.status in {JobStatus.ingesting, JobStatus.queued, JobStatus.processing}:
+            if job.status in {
+                JobStatus.ingest_queued,
+                JobStatus.ingesting,
+                JobStatus.queued,
+                JobStatus.processing,
+            }:
                 self._cancel_events[job_id].set()
                 self._jobs[job_id] = job.model_copy(
                     update={"status": JobStatus.paused, "updated_at": datetime.now(UTC)}
@@ -107,7 +117,7 @@ class JobStore:
             next_status = (
                 JobStatus.queued
                 if self.audio_path(job_id).exists()
-                else JobStatus.ingesting
+                else JobStatus.ingest_queued
             )
             self._jobs[job_id] = job.model_copy(
                 update={"status": next_status, "updated_at": datetime.now(UTC), "error": None}
@@ -116,9 +126,43 @@ class JobStore:
             result = self._jobs[job_id].model_copy(deep=True)
         if self.settings.execution_mode == "local":
             self._executor.submit(self._run, job_id, cancel_event)
-        elif result.status == JobStatus.ingesting:
-            self._executor.submit(self._prepare_remote, job_id, cancel_event)
         return result
+
+    def claim_ingest(self) -> Job | None:
+        with self._lock:
+            waiting = next(
+                (job for job in self._jobs.values() if job.status == JobStatus.ingest_queued),
+                None,
+            )
+            if not waiting:
+                return None
+            claimed = waiting.model_copy(
+                update={"status": JobStatus.ingesting, "updated_at": datetime.now(UTC)}
+            )
+            self._jobs[claimed.id] = claimed
+            self._persist(claimed)
+            return claimed.model_copy(deep=True)
+
+    def complete_ingest(self, job_id: str, audio: bytes, duration: float) -> Job | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
+            if job.status == JobStatus.cancelled:
+                return job.model_copy(deep=True)
+            path = self.audio_path(job_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(audio)
+            queued = job.model_copy(
+                update={
+                    "status": JobStatus.queued,
+                    "duration_seconds": duration,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+            self._jobs[job_id] = queued
+            self._persist(queued)
+            return queued.model_copy(deep=True)
 
     def audio_path(self, job_id: str) -> Path:
         return Path(self.settings.artifact_dir) / job_id / "source.wav"
