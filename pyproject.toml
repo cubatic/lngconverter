@@ -22,6 +22,7 @@ translation = [
   "torch>=2.5,<3",
   "transformers>=4.46,<5",
 ]
+worker = ["requests>=2.32,<3"]
 dev = [
   "httpx>=0.28,<1",
   "pytest>=8.3,<9",

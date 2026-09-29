@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import sys
 import time
+from functools import lru_cache
 from pathlib import Path
 from threading import Event
 from urllib.parse import urlparse
@@ -206,20 +207,24 @@ def _probe_and_validate_duration(
     return decoded_duration
 
 
+@lru_cache(maxsize=3)
+def _load_whisper_model(model_name: str, device: str, compute_type: str):
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as exc:
+        raise PipelineError("Install the inference dependencies: pip install -e '.[inference]'") from exc
+    return WhisperModel(model_name, device=device, compute_type=compute_type)
+
+
 def transcribe(
     audio_path: Path, settings: Settings, language: str | None, cancel_event: Event | None = None
 ):
     if cancel_event and cancel_event.is_set():
         raise PipelineCancelled("Processing paused or cancelled")
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError as exc:
-        raise PipelineError("Install the inference dependencies: pip install -e '.[inference]'") from exc
-
-    model = WhisperModel(
+    model = _load_whisper_model(
         settings.whisper_model,
-        device=settings.whisper_device,
-        compute_type=settings.whisper_compute_type,
+        settings.whisper_device,
+        settings.whisper_compute_type,
     )
     segments, info = model.transcribe(
         str(audio_path),

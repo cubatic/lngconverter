@@ -1,0 +1,80 @@
+import time
+from pathlib import Path
+
+import requests
+
+from .config import Settings
+from .pipeline import transcribe
+from .translation import translate_to_hindi
+
+
+class RemoteWorker:
+    def __init__(self, server_url: str, worker_key: str, settings: Settings, work_dir: Path):
+        self.server_url = server_url.rstrip("/")
+        self.settings = settings
+        self.work_dir = work_dir
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        self.session = requests.Session()
+        self.session.headers["x-lgn-worker-key"] = worker_key
+
+    def _request(self, method: str, path: str, **kwargs):
+        response = self.session.request(method, f"{self.server_url}{path}", timeout=120, **kwargs)
+        response.raise_for_status()
+        return response
+
+    def run_once(self) -> bool:
+        job = self._request("POST", "/v1/worker/jobs/claim").json()
+        if job is None:
+            return False
+        job_id = job["id"]
+        audio_path = self.work_dir / f"{job_id}.wav"
+        try:
+            audio = self._request("GET", f"/v1/worker/jobs/{job_id}/audio").content
+            audio_path.write_bytes(audio)
+            transcript, detected_language = transcribe(
+                audio_path,
+                self.settings,
+                job.get("source_language"),
+            )
+            current = self._request("GET", f"/v1/worker/jobs/{job_id}").json()
+            if current["status"] in {"paused", "cancelled"}:
+                return True
+            hindi_dialogue = translate_to_hindi(
+                transcript,
+                job.get("source_language") or detected_language,
+                self.settings,
+            )
+            payload = {
+                "detected_language": detected_language,
+                "duration_seconds": job.get("duration_seconds") or 0,
+                "transcript": [segment.model_dump() for segment in transcript],
+                "hindi_dialogue": [segment.model_dump() for segment in hindi_dialogue],
+            }
+            self._request("POST", f"/v1/worker/jobs/{job_id}/complete", json=payload)
+        except Exception as exc:
+            try:
+                self._request(
+                    "POST",
+                    f"/v1/worker/jobs/{job_id}/fail",
+                    json={"error": str(exc)},
+                )
+            except Exception as report_error:  # noqa: BLE001
+                print(f"Could not report job failure: {report_error}")
+            raise
+        finally:
+            audio_path.unlink(missing_ok=True)
+        return True
+
+    def run_forever(self, poll_seconds: float = 2) -> None:
+        print(f"LGN worker connected to {self.server_url}")
+        while True:
+            try:
+                worked = self.run_once()
+                if not worked:
+                    time.sleep(poll_seconds)
+            except KeyboardInterrupt:
+                print("Worker stopped")
+                return
+            except Exception as exc:  # noqa: BLE001
+                print(f"Worker error: {exc}")
+                time.sleep(5)
