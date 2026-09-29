@@ -135,6 +135,7 @@ def _extract_youtube_range(
         "--force-overwrites",
         "--download-sections",
         f"*{start_seconds}-{end_seconds}",
+        "--force-keyframes-at-cuts",
         "--format",
         "bestaudio",
         "--extract-audio",
