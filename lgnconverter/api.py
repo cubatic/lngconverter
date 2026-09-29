@@ -46,7 +46,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail="Empty audio chunk")
         if len(body) > active_settings.max_capture_bytes:
             raise HTTPException(status_code=413, detail="Audio chunk is too large")
-        chunk_path = session_dir / f"{sequence:06d}.webm"
+        content_type = request.headers.get("content-type", "").split(";", 1)[0]
+        extension = {"audio/webm": "webm", "audio/mp4": "m4a"}.get(content_type, "bin")
+        chunk_path = session_dir / f"{sequence:06d}.{extension}"
         chunk_path.write_bytes(body)
         return {"sequence": sequence, "bytes": len(body), "stored": True}
 

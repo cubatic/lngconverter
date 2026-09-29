@@ -62,12 +62,25 @@
     captureButton.disabled = true;
     let stream;
     try {
+      if (!navigator.mediaDevices?.getDisplayMedia) {
+        throw new Error('Tab capture is unavailable. Open this page in desktop Google Chrome.');
+      }
+      if (!window.MediaRecorder) {
+        throw new Error('Audio recording is unavailable in this browser.');
+      }
       stream = await navigator.mediaDevices.getDisplayMedia({video: true, audio: true});
       if (!stream.getAudioTracks().length) throw new Error('No tab audio shared. Enable Share tab audio.');
       const sessionResponse = await fetch('/v1/capture-sessions', {method: 'POST'});
       const {session_id: sessionId} = await sessionResponse.json();
       const audioOnly = new MediaStream(stream.getAudioTracks());
-      const recorder = new MediaRecorder(audioOnly, {mimeType: 'audio/webm;codecs=opus'});
+      const supportedType = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+      ].find(type => MediaRecorder.isTypeSupported(type));
+      const recorder = supportedType
+        ? new MediaRecorder(audioOnly, {mimeType: supportedType})
+        : new MediaRecorder(audioOnly);
       const parts = [];
       recorder.addEventListener('dataavailable', event => { if (event.data.size) parts.push(event.data); });
       const stopped = new Promise(resolve => recorder.addEventListener('stop', resolve, {once: true}));
@@ -79,7 +92,7 @@
       }
       recorder.stop();
       await stopped;
-      const blob = new Blob(parts, {type: 'audio/webm'});
+      const blob = new Blob(parts, {type: recorder.mimeType || parts[0]?.type || 'application/octet-stream'});
       const response = await fetch(`/v1/capture-sessions/${sessionId}/chunks/0`, {
         method: 'POST', headers: {'content-type': blob.type}, body: blob
       });
