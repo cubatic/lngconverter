@@ -244,6 +244,7 @@ class JobStore:
                     "duration_seconds": result.duration_seconds,
                     "transcript": result.transcript,
                     "hindi_dialogue": result.hindi_dialogue,
+                    "stage_timings": result.stage_timings,
                     "updated_at": datetime.now(UTC),
                     "error": None,
                 }

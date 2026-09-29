@@ -52,6 +52,7 @@ class Job(BaseModel):
     transcript: list[TranscriptSegment] = Field(default_factory=list)
     hindi_dialogue: list[TranslatedSegment] = Field(default_factory=list)
     has_dubbed_audio: bool = False
+    stage_timings: dict[str, float] = Field(default_factory=dict)
     error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -62,6 +63,7 @@ class WorkerResult(BaseModel):
     duration_seconds: float
     transcript: list[TranscriptSegment] = Field(default_factory=list)
     hindi_dialogue: list[TranslatedSegment] = Field(default_factory=list)
+    stage_timings: dict[str, float] = Field(default_factory=dict)
 
 
 class WorkerFailure(BaseModel):

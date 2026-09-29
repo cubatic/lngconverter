@@ -43,27 +43,35 @@ class RemoteWorker:
             return False
         job_id = job["id"]
         audio_path = self.work_dir / f"{job_id}.wav"
+        timings: dict[str, float] = {}
         try:
+            stage_started = time.monotonic()
             audio = self._request("GET", f"/v1/worker/jobs/{job_id}/audio").content
             audio_path.write_bytes(audio)
+            timings["download"] = round(time.monotonic() - stage_started, 3)
+            stage_started = time.monotonic()
             transcript, detected_language = transcribe(
                 audio_path,
                 self.settings,
                 job.get("source_language"),
             )
+            timings["transcription"] = round(time.monotonic() - stage_started, 3)
             current = self._request("GET", f"/v1/worker/jobs/{job_id}").json()
             if current["status"] in {"paused", "cancelled"}:
                 return True
+            stage_started = time.monotonic()
             hindi_dialogue = translate_to_hindi(
                 transcript,
                 job.get("source_language") or detected_language,
                 self.settings,
             )
+            timings["translation"] = round(time.monotonic() - stage_started, 3)
             if self.settings.enable_tts and hindi_dialogue:
                 dubbed_path = self.work_dir / f"{job_id}-hindi.wav"
-                create_dubbed_audio(
+                timings.update(create_dubbed_audio(
                     audio_path, hindi_dialogue, dubbed_path, self.settings
-                )
+                ))
+                stage_started = time.monotonic()
                 with dubbed_path.open("rb") as dubbed_file:
                     self._request(
                         "PUT",
@@ -71,13 +79,16 @@ class RemoteWorker:
                         data=dubbed_file,
                         headers={"content-type": "audio/wav"},
                     )
+                timings["upload"] = round(time.monotonic() - stage_started, 3)
             payload = {
                 "detected_language": detected_language,
                 "duration_seconds": job.get("duration_seconds") or 0,
                 "transcript": [segment.model_dump() for segment in transcript],
                 "hindi_dialogue": [segment.model_dump() for segment in hindi_dialogue],
+                "stage_timings": timings,
             }
             self._request("POST", f"/v1/worker/jobs/{job_id}/complete", json=payload)
+            print(f"Completed {job_id}: {timings}")
         except Exception as exc:
             try:
                 self._request(

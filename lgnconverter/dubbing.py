@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -239,15 +240,17 @@ def create_dubbed_audio(
     dialogue: list[TranslatedSegment],
     output_path: Path,
     settings: Settings,
-) -> None:
+) -> dict[str, float]:
     if not dialogue:
         raise PipelineError("No Hindi dialogue is available for TTS")
     work_dir = output_path.parent / "dub-work"
     work_dir.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
     if settings.enable_source_separation:
         background, vocals = _separate_background(source_audio, work_dir)
     else:
         background = vocals = source_audio
+    separation_finished = time.monotonic()
     inputs = ["-i", str(background)]
     filter_parts: list[str] = []
     filter_parts.append(f"[0:a]volume={settings.background_volume:.3f}[background]")
@@ -273,6 +276,7 @@ def create_dubbed_audio(
             f"adelay={delay_ms}|{delay_ms}[{label}]"
         )
         mix_labels.append(f"[{label}]")
+    synthesis_finished = time.monotonic()
     filter_parts.append(
         "".join(mix_labels)
         + f"amix=inputs={len(mix_labels)}:duration=first:normalize=0,alimiter=limit=0.95[out]"
@@ -297,3 +301,9 @@ def create_dubbed_audio(
             str(output_path),
         ]
     )
+    finished = time.monotonic()
+    return {
+        "separation": round(separation_finished - started, 3),
+        "tts": round(synthesis_finished - separation_finished, 3),
+        "mixing": round(finished - synthesis_finished, 3),
+    }
