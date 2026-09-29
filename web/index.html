@@ -34,9 +34,20 @@ let player=null,chunks=[],runToken=0,currentIndex=-1,playbackStarted=false,suppr
 const apiReady=new Promise(resolve=>{window.onYouTubeIframeAPIReady=resolve});
 e.apiKey.value=sessionStorage.getItem('lgnApiKey')||'';
 const authHeaders=()=>({'x-lgn-api-key':e.apiKey.value.trim()});
+async function apiFetch(url,options={}){
+  for(let attempt=0;attempt<5;attempt++){
+    try{
+      const response=await fetch(url,options);
+      if(![502,503,504].includes(response.status)||attempt===4)return response;
+    }catch(error){
+      if((options.method||'GET')!=='GET'||attempt===4)throw error;
+    }
+    updateStatus(`Server reconnecting… attempt ${attempt+2}/5`);await wait(750*(attempt+1));
+  }
+}
 async function controlJob(record,action){
   if(!record.job||terminal.has(record.job.status))return;
-  const response=await fetch(`/v1/jobs/${record.job.id}/${action}`,{method:'POST',headers:authHeaders()});
+  const response=await apiFetch(`/v1/jobs/${record.job.id}/${action}`,{method:'POST',headers:authHeaders()});
   if(response.ok)record.job=await response.json();
 }
 async function controlActive(action){await Promise.all(chunks.map(record=>controlJob(record,action)))}
@@ -56,17 +67,17 @@ async function playerState(event){
 async function createChunk(record,sourceUrl,token){
   if(record.promise)return record.promise;
   record.promise=(async()=>{
-    const response=await fetch('/v1/jobs',{method:'POST',headers:{'content-type':'application/json',...authHeaders()},body:JSON.stringify({source_url:sourceUrl,authorization_confirmed:true,source_language:'zh',target_language:'hi',clip_start_seconds:record.start,clip_duration_seconds:record.duration})});
+    const response=await apiFetch('/v1/jobs',{method:'POST',headers:{'content-type':'application/json',...authHeaders()},body:JSON.stringify({source_url:sourceUrl,authorization_confirmed:true,source_language:'zh',target_language:'hi',clip_start_seconds:record.start,clip_duration_seconds:record.duration})});
     if(!response.ok)throw new Error(await response.text());record.job=await response.json();updateStatus();
     while(!terminal.has(record.job.status)){
       await wait(2000);if(token!==runToken)throw new Error('Stopped');
-      const poll=await fetch(`/v1/jobs/${record.job.id}`,{headers:authHeaders()});if(!poll.ok)throw new Error(await poll.text());record.job=await poll.json();updateStatus();
+      const poll=await apiFetch(`/v1/jobs/${record.job.id}`,{headers:authHeaders()});if(!poll.ok)throw new Error(await poll.text());record.job=await poll.json();updateStatus();
     }
     if(record.job.status==='failed')throw new Error(record.job.error||'Chunk processing failed');
     if(record.job.status==='cancelled')throw new Error('Stopped');
     let audioResponse=null;
     for(let attempt=0;attempt<10;attempt++){
-      audioResponse=await fetch(`/v1/jobs/${record.job.id}/dubbed-audio`,{headers:authHeaders()});
+      audioResponse=await apiFetch(`/v1/jobs/${record.job.id}/dubbed-audio`,{headers:authHeaders()});
       if(audioResponse.ok)break;if(audioResponse.status!==409)throw new Error(await audioResponse.text());
       updateStatus(`Audio upload finishing for chunk ${record.index+1}…`);await wait(1000);if(token!==runToken)throw new Error('Stopped');
     }
