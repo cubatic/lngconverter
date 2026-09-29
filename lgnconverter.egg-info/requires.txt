@@ -1,0 +1,12 @@
+fastapi<1,>=0.115
+pydantic-settings<3,>=2.6
+uvicorn[standard]<1,>=0.32
+yt-dlp>=2025.1.15
+
+[dev]
+httpx<1,>=0.28
+pytest<9,>=8.3
+ruff<1,>=0.9
+
+[inference]
+faster-whisper<2,>=1.1

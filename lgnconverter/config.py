@@ -1,0 +1,22 @@
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="LGN_")
+
+    enable_youtube_source: bool = False
+    artifact_dir: Path = Path("artifacts")
+    whisper_model: str = "small"
+    whisper_device: str = "auto"
+    whisper_compute_type: str = "auto"
+    max_source_seconds: int = 180
+    keep_audio_artifacts: bool = True
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
