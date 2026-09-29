@@ -12,7 +12,12 @@ class PipelineError(RuntimeError):
     pass
 
 
-def extract_audio(source: ResolvedSource, output_path: Path, max_seconds: int) -> float | None:
+def extract_audio(
+    source: ResolvedSource,
+    output_path: Path,
+    start_seconds: float,
+    duration_seconds: float,
+) -> float | None:
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         raise PipelineError("FFmpeg and ffprobe must be installed")
 
@@ -21,12 +26,14 @@ def extract_audio(source: ResolvedSource, output_path: Path, max_seconds: int) -
     if source.http_headers:
         header_blob = "".join(f"{key}: {value}\r\n" for key, value in source.http_headers.items())
         command.extend(["-headers", header_blob])
+    if start_seconds:
+        command.extend(["-ss", str(start_seconds)])
     command.extend(
         [
             "-i",
             source.media_url,
             "-t",
-            str(max_seconds),
+            str(duration_seconds),
             "-vn",
             "-ac",
             "1",
@@ -38,7 +45,13 @@ def extract_audio(source: ResolvedSource, output_path: Path, max_seconds: int) -
         ]
     )
     try:
-        subprocess.run(command, check=True, capture_output=True, text=True, timeout=max_seconds + 90)
+        subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=duration_seconds + 90,
+        )
     except subprocess.CalledProcessError as exc:
         raise PipelineError(exc.stderr.strip() or "FFmpeg could not decode the source") from exc
     except subprocess.TimeoutExpired as exc:
@@ -85,4 +98,3 @@ def transcribe(audio_path: Path, settings: Settings, language: str | None):
         if segment.text.strip()
     ]
     return result, info.language
-

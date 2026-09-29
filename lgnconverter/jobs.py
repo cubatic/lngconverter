@@ -24,6 +24,8 @@ class JobStore:
             source_url=str(request.source_url),
             source_language=request.source_language,
             target_language=request.target_language,
+            clip_start_seconds=request.clip_start_seconds,
+            clip_duration_seconds=request.clip_duration_seconds,
         )
         with self._lock:
             self._jobs[job.id] = job
@@ -48,7 +50,12 @@ class JobStore:
         audio_path = Path(self.settings.artifact_dir) / job_id / "source.wav"
         try:
             source = resolve_source(job.source_url, self.settings)
-            duration = extract_audio(source, audio_path, self.settings.max_source_seconds)
+            duration = extract_audio(
+                source,
+                audio_path,
+                job.clip_start_seconds,
+                min(job.clip_duration_seconds, self.settings.max_source_seconds),
+            )
             transcript, detected_language = transcribe(
                 audio_path, self.settings, job.source_language
             )

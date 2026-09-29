@@ -73,10 +73,6 @@ def resolve_source(url: str, settings: Settings) -> ResolvedSource:
         raise SourceError(f"YouTube stream resolution failed: {exc}") from exc
 
     duration = info.get("duration")
-    if duration and duration > settings.max_source_seconds:
-        raise SourceError(
-            f"Source is {duration:.0f}s; prototype limit is {settings.max_source_seconds}s"
-        )
     media_url = info.get("url")
     if not media_url:
         raise SourceError("No playable audio stream was found")
@@ -86,4 +82,3 @@ def resolve_source(url: str, settings: Settings) -> ResolvedSource:
         duration=duration,
         http_headers=info.get("http_headers"),
     )
-

@@ -45,7 +45,9 @@ curl -X POST http://127.0.0.1:8000/v1/jobs \
     "source_url": "https://www.youtube.com/watch?v=AUTHORIZED_VIDEO_ID",
     "authorization_confirmed": true,
     "source_language": "zh",
-    "target_language": "hi"
+    "target_language": "hi",
+    "clip_start_seconds": 0,
+    "clip_duration_seconds": 120
   }'
 ```
 

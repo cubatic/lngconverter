@@ -18,6 +18,8 @@ class CreateJobRequest(BaseModel):
     )
     source_language: str | None = Field(default=None, examples=["zh", "ko", "en"])
     target_language: str = "hi"
+    clip_start_seconds: float = Field(default=0, ge=0)
+    clip_duration_seconds: float = Field(default=120, gt=0, le=180)
 
 
 class TranscriptSegment(BaseModel):
@@ -32,10 +34,11 @@ class Job(BaseModel):
     source_url: str
     source_language: str | None = None
     target_language: str = "hi"
+    clip_start_seconds: float = 0
+    clip_duration_seconds: float = 120
     detected_language: str | None = None
     duration_seconds: float | None = None
     transcript: list[TranscriptSegment] = Field(default_factory=list)
     error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
