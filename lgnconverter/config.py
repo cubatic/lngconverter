@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     tts_model: str = "ai4bharat/indic-parler-tts"
     tts_device: str = "auto"
     tts_voice_description: str = (
-        "Divya speaks Hindi in a natural, expressive female voice at a moderate pace, "
-        "with realistic changes in emphasis and intensity. "
+        "Rani speaks Hindi in a youthful, light female voice. She sounds natural, cinematic "
+        "and conversational, never like a news reader. "
         "The recording is very high quality, close-sounding, and has no background noise."
     )
     enable_source_separation: bool = False

@@ -23,7 +23,7 @@ translation = [
   "transformers>=4.46,<5",
 ]
 worker = ["requests>=2.32,<3"]
-tts = ["soundfile>=0.13,<1"]
+tts = ["numpy>=1.26,<3", "soundfile>=0.13,<1"]
 dev = [
   "httpx>=0.28,<1",
   "pytest>=8.3,<9",
