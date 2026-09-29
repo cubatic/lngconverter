@@ -60,6 +60,10 @@ queue and database will replace it before multi-user deployment.
 
 ## Colab installation cell
 
+The ready-to-run notebook can be opened directly in Colab:
+
+[Open `01_stream_transcription_colab.ipynb` in Colab](https://colab.research.google.com/github/cubatic/lngconverter/blob/main/notebooks/01_stream_transcription_colab.ipynb)
+
 ```python
 !apt-get update -qq && apt-get install -y -qq ffmpeg
 !git clone YOUR_REPOSITORY_URL /content/Lgnconverter
