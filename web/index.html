@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>LGN Converter – Hindi Player</title>
   <style>
-    :root{color-scheme:dark;font-family:Inter,system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;background:#080c16;color:#eef3ff}main{width:min(1050px,calc(100% - 32px));margin:32px auto}.panel{background:#111827;border:1px solid #29334a;border-radius:18px;padding:22px}h1{margin:0 0 8px}.hint{color:#aeb8cf;line-height:1.5}.row{display:grid;grid-template-columns:1fr 110px 110px auto;gap:10px;margin-top:18px}input,button{border-radius:10px;padding:12px;font:inherit}input{min-width:0;background:#080c16;color:inherit;border:1px solid #3b4662}button{border:0;background:#6d7cff;color:white;font-weight:750;cursor:pointer}button:disabled{opacity:.45;cursor:wait}iframe{width:100%;aspect-ratio:16/9;border:0;border-radius:12px;margin-top:18px;background:#000}#status{margin-top:16px;padding:12px;background:#080c16;border-radius:10px;white-space:pre-wrap}#transcript{margin-top:12px;max-height:280px;overflow:auto}.segment{display:grid;grid-template-columns:120px 1fr;gap:12px;padding:9px 4px;border-bottom:1px solid #263047}.time{color:#8ca0c8;font-variant-numeric:tabular-nums}@media(max-width:760px){.row{grid-template-columns:1fr 1fr}.row input:first-child{grid-column:1/-1}}
+    :root{color-scheme:dark;font-family:Inter,system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;background:#080c16;color:#eef3ff}main{width:min(1050px,calc(100% - 32px));margin:32px auto}.panel{background:#111827;border:1px solid #29334a;border-radius:18px;padding:22px}h1{margin:0 0 8px}.hint{color:#aeb8cf;line-height:1.5}.row{display:grid;grid-template-columns:1fr 160px 90px 90px auto;gap:10px;margin-top:18px}input,button{border-radius:10px;padding:12px;font:inherit}input{min-width:0;background:#080c16;color:inherit;border:1px solid #3b4662}button{border:0;background:#6d7cff;color:white;font-weight:750;cursor:pointer}button:disabled{opacity:.45;cursor:wait}iframe{width:100%;aspect-ratio:16/9;border:0;border-radius:12px;margin-top:18px;background:#000}#status{margin-top:16px;padding:12px;background:#080c16;border-radius:10px;white-space:pre-wrap}#transcript{margin-top:12px;max-height:280px;overflow:auto}.segment{display:grid;grid-template-columns:120px 1fr;gap:12px;padding:9px 4px;border-bottom:1px solid #263047}.time{color:#8ca0c8;font-variant-numeric:tabular-nums}@media(max-width:760px){.row{grid-template-columns:1fr 1fr}.row input:first-child{grid-column:1/-1}}
   </style>
 </head>
 <body><main><section class="panel">
@@ -12,6 +12,7 @@
   <p class="hint">The source video plays muted. The backend prepares the selected range; Hindi mixed audio will be attached in the next stage.</p>
   <div class="row">
     <input id="url" value="https://www.youtube.com/watch?v=4tk4uI5BzTw" aria-label="Authorized video URL">
+    <input id="apiKey" type="password" placeholder="Access key" aria-label="API access key">
     <input id="start" type="number" min="0" value="0" aria-label="Start seconds">
     <input id="duration" type="number" min="1" max="180" value="30" aria-label="Duration seconds">
     <button id="prepare">Prepare Hindi</button>
@@ -21,12 +22,14 @@
 </section></main>
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
-const e={url:document.querySelector('#url'),start:document.querySelector('#start'),duration:document.querySelector('#duration'),prepare:document.querySelector('#prepare'),player:document.querySelector('#player'),status:document.querySelector('#status'),transcript:document.querySelector('#transcript')};
+const e={url:document.querySelector('#url'),apiKey:document.querySelector('#apiKey'),start:document.querySelector('#start'),duration:document.querySelector('#duration'),prepare:document.querySelector('#prepare'),player:document.querySelector('#player'),status:document.querySelector('#status'),transcript:document.querySelector('#transcript')};
 function videoId(value){const url=new URL(value);return url.hostname==='youtu.be'?url.pathname.slice(1):url.searchParams.get('v')}
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let player=null,currentJob=null;
 const apiReady=new Promise(resolve=>{window.onYouTubeIframeAPIReady=resolve});
-async function control(action){if(!currentJob)return;const response=await fetch(`/v1/jobs/${currentJob.id}/${action}`,{method:'POST'});if(response.ok)currentJob=await response.json()}
+e.apiKey.value=sessionStorage.getItem('lgnApiKey')||'';
+const authHeaders=()=>({'x-lgn-api-key':e.apiKey.value.trim()});
+async function control(action){if(!currentJob)return;const response=await fetch(`/v1/jobs/${currentJob.id}/${action}`,{method:'POST',headers:authHeaders()});if(response.ok)currentJob=await response.json()}
 async function playerState(event){
   if(event.data===YT.PlayerState.PAUSED)await control('pause');
   if(event.data===YT.PlayerState.PLAYING&&currentJob?.status==='paused')await control('resume');
@@ -34,15 +37,16 @@ async function playerState(event){
 }
 e.prepare.addEventListener('click',async()=>{e.prepare.disabled=true;e.transcript.replaceChildren();try{
   const sourceUrl=e.url.value.trim(),id=videoId(sourceUrl),start=Number(e.start.value),duration=Number(e.duration.value);
+  if(!e.apiKey.value.trim())throw new Error('Access key is required');sessionStorage.setItem('lgnApiKey',e.apiKey.value.trim());
   if(!id)throw new Error('No YouTube video ID found');if(start<0||duration<1||duration>180)throw new Error('Use a duration from 1 to 180 seconds');
   if(currentJob&&!['completed','failed','cancelled'].includes(currentJob.status))await control('cancel');
   await apiReady;
   if(player)player.destroy();
   player=new YT.Player('player',{videoId:id,playerVars:{autoplay:1,mute:1,start:Math.floor(start)},events:{onReady:event=>{event.target.mute();event.target.playVideo()},onStateChange:playerState}});
   e.status.textContent='Creating processing job…';
-  const response=await fetch('/v1/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({source_url:sourceUrl,authorization_confirmed:true,source_language:'zh',target_language:'hi',clip_start_seconds:start,clip_duration_seconds:duration})});
+  const response=await fetch('/v1/jobs',{method:'POST',headers:{'content-type':'application/json',...authHeaders()},body:JSON.stringify({source_url:sourceUrl,authorization_confirmed:true,source_language:'zh',target_language:'hi',clip_start_seconds:start,clip_duration_seconds:duration})});
   if(!response.ok)throw new Error(await response.text());currentJob=await response.json();
-  while(!['completed','failed','cancelled'].includes(currentJob.status)){e.status.textContent=`Job ${currentJob.id}\nStatus: ${currentJob.status}\nPause video to pause processing; resume video to continue.`;await wait(3000);currentJob=await(await fetch(`/v1/jobs/${currentJob.id}`)).json()}
+  while(!['completed','failed','cancelled'].includes(currentJob.status)){e.status.textContent=`Job ${currentJob.id}\nStatus: ${currentJob.status}\nPause video to pause processing; resume video to continue.`;await wait(3000);currentJob=await(await fetch(`/v1/jobs/${currentJob.id}`,{headers:authHeaders()})).json()}
   if(currentJob.status==='failed')throw new Error(currentJob.error);if(currentJob.status==='cancelled'){e.status.textContent='Playback stopped · processing cancelled.';return}
   const job=currentJob;e.status.textContent=`Analysis complete · ${job.duration_seconds.toFixed(2)}s · language ${job.detected_language}`;
   const hindi=new Map(job.hindi_dialogue.map(segment=>[`${segment.start}:${segment.end}`,segment.hindi_text]));

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     enable_translation: bool = False
     translation_model: str = "facebook/nllb-200-distilled-600M"
     translation_device: str = "cpu"
+    api_key: str = ""
+    worker_api_key: str = ""
+    execution_mode: str = "local"
 
 
 @lru_cache

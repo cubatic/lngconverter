@@ -1,3 +1,4 @@
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -5,7 +6,7 @@ from threading import Event, Lock
 from uuid import uuid4
 
 from .config import Settings
-from .models import CreateJobRequest, Job, JobStatus
+from .models import CreateJobRequest, Job, JobStatus, WorkerResult
 from .pipeline import PipelineCancelled, extract_audio, transcribe
 from .source import resolve_source
 from .translation import translate_to_hindi
@@ -18,6 +19,38 @@ class JobStore:
         self._lock = Lock()
         self._cancel_events: dict[str, Event] = {}
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lgn-pipeline")
+        self._database_path = settings.artifact_dir / "jobs.sqlite3"
+        self._database_path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize_database()
+        self._load_jobs()
+
+    def _connect(self):
+        return sqlite3.connect(self._database_path, timeout=10)
+
+    def _initialize_database(self) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+            )
+
+    def _load_jobs(self) -> None:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT payload FROM jobs").fetchall()
+        for (payload,) in rows:
+            job = Job.model_validate_json(payload)
+            if job.status in {JobStatus.queued, JobStatus.processing}:
+                job = job.model_copy(update={"status": JobStatus.paused})
+            self._jobs[job.id] = job
+            self._cancel_events[job.id] = Event()
+            self._persist(job)
+
+    def _persist(self, job: Job) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO jobs(id, payload) VALUES(?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload",
+                (job.id, job.model_dump_json()),
+            )
 
     def create(self, request: CreateJobRequest) -> Job:
         job = Job(
@@ -33,7 +66,9 @@ class JobStore:
             self._jobs[job.id] = job
             cancel_event = Event()
             self._cancel_events[job.id] = cancel_event
-        self._executor.submit(self._run, job.id, cancel_event)
+            self._persist(job)
+        if self.settings.execution_mode == "local":
+            self._executor.submit(self._run, job.id, cancel_event)
         return job.model_copy(deep=True)
 
     def get(self, job_id: str) -> Job | None:
@@ -51,6 +86,7 @@ class JobStore:
                 self._jobs[job_id] = job.model_copy(
                     update={"status": JobStatus.paused, "updated_at": datetime.now(UTC)}
                 )
+                self._persist(self._jobs[job_id])
             return self._jobs[job_id].model_copy(deep=True)
 
     def resume(self, job_id: str) -> Job | None:
@@ -65,9 +101,63 @@ class JobStore:
             self._jobs[job_id] = job.model_copy(
                 update={"status": JobStatus.queued, "updated_at": datetime.now(UTC), "error": None}
             )
+            self._persist(self._jobs[job_id])
             result = self._jobs[job_id].model_copy(deep=True)
-        self._executor.submit(self._run, job_id, cancel_event)
+        if self.settings.execution_mode == "local":
+            self._executor.submit(self._run, job_id, cancel_event)
         return result
+
+    def claim(self) -> Job | None:
+        with self._lock:
+            queued = next(
+                (job for job in self._jobs.values() if job.status == JobStatus.queued), None
+            )
+            if not queued:
+                return None
+            claimed = queued.model_copy(
+                update={"status": JobStatus.processing, "updated_at": datetime.now(UTC)}
+            )
+            self._jobs[claimed.id] = claimed
+            self._persist(claimed)
+            return claimed.model_copy(deep=True)
+
+    def complete_remote(self, job_id: str, result: WorkerResult) -> Job | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
+            if job.status == JobStatus.cancelled:
+                return job.model_copy(deep=True)
+            completed = job.model_copy(
+                update={
+                    "status": JobStatus.completed,
+                    "detected_language": result.detected_language,
+                    "duration_seconds": result.duration_seconds,
+                    "transcript": result.transcript,
+                    "hindi_dialogue": result.hindi_dialogue,
+                    "updated_at": datetime.now(UTC),
+                    "error": None,
+                }
+            )
+            self._jobs[job_id] = completed
+            self._persist(completed)
+            return completed.model_copy(deep=True)
+
+    def fail_remote(self, job_id: str, error: str) -> Job | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
+            failed = job.model_copy(
+                update={
+                    "status": JobStatus.failed,
+                    "error": error,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+            self._jobs[job_id] = failed
+            self._persist(failed)
+            return failed.model_copy(deep=True)
 
     def cancel(self, job_id: str) -> Job | None:
         with self._lock:
@@ -78,6 +168,7 @@ class JobStore:
             self._jobs[job_id] = job.model_copy(
                 update={"status": JobStatus.cancelled, "updated_at": datetime.now(UTC)}
             )
+            self._persist(self._jobs[job_id])
             return self._jobs[job_id].model_copy(deep=True)
 
     def _update(self, job_id: str, **changes) -> None:
@@ -85,6 +176,7 @@ class JobStore:
             job = self._jobs[job_id]
             changes["updated_at"] = datetime.now(UTC)
             self._jobs[job_id] = job.model_copy(update=changes)
+            self._persist(self._jobs[job_id])
 
     def _run(self, job_id: str, cancel_event: Event) -> None:
         with self._lock:
@@ -131,6 +223,7 @@ class JobStore:
                     current = self._jobs[job_id]
                     if current.status not in {JobStatus.paused, JobStatus.cancelled}:
                         self._jobs[job_id] = current.model_copy(update={"status": JobStatus.paused})
+                        self._persist(self._jobs[job_id])
         except Exception as exc:  # noqa: BLE001
             self._update(job_id, status=JobStatus.failed, error=str(exc))
         finally:

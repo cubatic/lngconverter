@@ -1,11 +1,12 @@
+import secrets
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import FileResponse
 
 from .config import Settings, get_settings
 from .jobs import JobStore
-from .models import CreateJobRequest, Job
+from .models import CreateJobRequest, Job, WorkerFailure, WorkerResult
 from .source import SourceError, validate_source_url
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -16,6 +17,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     store = JobStore(active_settings)
     app = FastAPI(title="LGN Converter", version="0.1.0")
 
+    def require_client_key(x_lgn_api_key: str | None = Header(default=None)):
+        if not active_settings.api_key:
+            return
+        if not x_lgn_api_key or not secrets.compare_digest(x_lgn_api_key, active_settings.api_key):
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+    def require_worker_key(x_lgn_worker_key: str | None = Header(default=None)):
+        if not active_settings.worker_api_key:
+            raise HTTPException(status_code=503, detail="Worker API is not configured")
+        if not x_lgn_worker_key or not secrets.compare_digest(
+            x_lgn_worker_key, active_settings.worker_api_key
+        ):
+            raise HTTPException(status_code=401, detail="Invalid or missing worker key")
+
     @app.get("/health")
     def health():
         return {"status": "ok", "youtube_source_enabled": active_settings.enable_youtube_source}
@@ -24,7 +39,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def browser_prototype():
         return FileResponse(WEB_DIR / "index.html")
 
-    @app.post("/v1/jobs", response_model=Job, status_code=status.HTTP_202_ACCEPTED)
+    @app.post(
+        "/v1/jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_client_key)],
+    )
     def create_job(request: CreateJobRequest):
         if not request.authorization_confirmed:
             raise HTTPException(
@@ -39,30 +59,68 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return store.create(request)
 
-    @app.get("/v1/jobs/{job_id}", response_model=Job)
+    @app.get(
+        "/v1/jobs/{job_id}", response_model=Job, dependencies=[Depends(require_client_key)]
+    )
     def get_job(job_id: str):
         job = store.get(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         return job
 
-    @app.post("/v1/jobs/{job_id}/pause", response_model=Job)
+    @app.post(
+        "/v1/jobs/{job_id}/pause", response_model=Job, dependencies=[Depends(require_client_key)]
+    )
     def pause_job(job_id: str):
         job = store.pause(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         return job
 
-    @app.post("/v1/jobs/{job_id}/resume", response_model=Job)
+    @app.post(
+        "/v1/jobs/{job_id}/resume", response_model=Job, dependencies=[Depends(require_client_key)]
+    )
     def resume_job(job_id: str):
         job = store.resume(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         return job
 
-    @app.post("/v1/jobs/{job_id}/cancel", response_model=Job)
+    @app.post(
+        "/v1/jobs/{job_id}/cancel", response_model=Job, dependencies=[Depends(require_client_key)]
+    )
     def cancel_job(job_id: str):
         job = store.cancel(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
+
+    @app.post(
+        "/v1/worker/jobs/claim",
+        response_model=Job | None,
+        dependencies=[Depends(require_worker_key)],
+    )
+    def claim_worker_job():
+        return store.claim()
+
+    @app.post(
+        "/v1/worker/jobs/{job_id}/complete",
+        response_model=Job,
+        dependencies=[Depends(require_worker_key)],
+    )
+    def complete_worker_job(job_id: str, result: WorkerResult):
+        job = store.complete_remote(job_id, result)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
+
+    @app.post(
+        "/v1/worker/jobs/{job_id}/fail",
+        response_model=Job,
+        dependencies=[Depends(require_worker_key)],
+    )
+    def fail_worker_job(job_id: str, failure: WorkerFailure):
+        job = store.fail_remote(job_id, failure.error)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         return job

@@ -52,3 +52,14 @@ class Job(BaseModel):
     error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class WorkerResult(BaseModel):
+    detected_language: str
+    duration_seconds: float
+    transcript: list[TranscriptSegment] = Field(default_factory=list)
+    hindi_dialogue: list[TranslatedSegment] = Field(default_factory=list)
+
+
+class WorkerFailure(BaseModel):
+    error: str
