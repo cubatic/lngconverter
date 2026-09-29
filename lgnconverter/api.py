@@ -76,6 +76,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Job not found")
         return job
 
+    @app.get(
+        "/v1/jobs/{job_id}/dubbed-audio",
+        dependencies=[Depends(require_client_key)],
+        response_class=FileResponse,
+    )
+    def download_dubbed_audio(job_id: str):
+        job = store.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        audio_path = store.dubbed_audio_path(job_id)
+        if not audio_path.is_file():
+            raise HTTPException(status_code=409, detail="Dubbed audio is not ready")
+        return FileResponse(audio_path, media_type="audio/wav", filename=f"{job_id}-hindi.wav")
+
     @app.post(
         "/v1/jobs/{job_id}/pause", response_model=Job, dependencies=[Depends(require_client_key)]
     )
@@ -132,6 +146,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     def get_worker_job(job_id: str):
         job = store.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
+
+    @app.put(
+        "/v1/worker/jobs/{job_id}/dubbed-audio",
+        response_model=Job,
+        dependencies=[Depends(require_worker_key)],
+    )
+    async def upload_worker_dubbed_audio(job_id: str, request: Request):
+        audio = await request.body()
+        if not audio:
+            raise HTTPException(status_code=422, detail="Audio payload is empty")
+        if len(audio) > 100 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Audio payload exceeds 100 MB")
+        job = store.save_dubbed_audio(job_id, audio)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         return job

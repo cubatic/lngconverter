@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     enable_translation: bool = False
     translation_model: str = "facebook/nllb-200-distilled-600M"
     translation_device: str = "cpu"
+    enable_tts: bool = False
+    tts_model: str = "ai4bharat/indic-parler-tts"
+    tts_device: str = "auto"
+    tts_voice_description: str = (
+        "Rohit speaks Hindi in a clear, expressive, cinematic voice at a moderate pace. "
+        "The recording is very high quality, close-sounding, and has no background noise."
+    )
+    enable_source_separation: bool = False
     api_key: str = ""
     worker_api_key: str = ""
     ingest_api_key: str = ""

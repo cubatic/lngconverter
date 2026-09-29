@@ -4,6 +4,7 @@ from pathlib import Path
 import requests
 
 from .config import Settings
+from .dubbing import create_dubbed_audio
 from .pipeline import transcribe
 from .translation import translate_to_hindi
 
@@ -44,6 +45,18 @@ class RemoteWorker:
                 job.get("source_language") or detected_language,
                 self.settings,
             )
+            if self.settings.enable_tts and hindi_dialogue:
+                dubbed_path = self.work_dir / f"{job_id}-hindi.wav"
+                create_dubbed_audio(
+                    audio_path, hindi_dialogue, dubbed_path, self.settings
+                )
+                with dubbed_path.open("rb") as dubbed_file:
+                    self._request(
+                        "PUT",
+                        f"/v1/worker/jobs/{job_id}/dubbed-audio",
+                        data=dubbed_file,
+                        headers={"content-type": "audio/wav"},
+                    )
             payload = {
                 "detected_language": detected_language,
                 "duration_seconds": job.get("duration_seconds") or 0,
@@ -63,6 +76,7 @@ class RemoteWorker:
             raise
         finally:
             audio_path.unlink(missing_ok=True)
+            (self.work_dir / f"{job_id}-hindi.wav").unlink(missing_ok=True)
         return True
 
     def run_forever(self, poll_seconds: float = 2) -> None:

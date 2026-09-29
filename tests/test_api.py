@@ -90,6 +90,14 @@ def test_remote_worker_claims_and_completes_job(tmp_path):
     assert claimed.json()["id"] == job_id
     assert claimed.json()["status"] == "processing"
 
+    dubbed = client.put(
+        f"/v1/worker/jobs/{job_id}/dubbed-audio",
+        headers={"x-lgn-worker-key": "worker-key", "content-type": "audio/wav"},
+        content=b"dubbed-wave",
+    )
+    assert dubbed.status_code == 200
+    assert dubbed.json()["has_dubbed_audio"] is True
+
     completed = client.post(
         f"/v1/worker/jobs/{job_id}/complete",
         headers={"x-lgn-worker-key": "worker-key"},
@@ -110,3 +118,8 @@ def test_remote_worker_claims_and_completes_job(tmp_path):
     assert completed.status_code == 200
     assert completed.json()["status"] == "completed"
     assert completed.json()["hindi_dialogue"][0]["hindi_text"] == "नमस्ते"
+    audio = client.get(
+        f"/v1/jobs/{job_id}/dubbed-audio", headers={"x-lgn-api-key": "client-key"}
+    )
+    assert audio.status_code == 200
+    assert audio.content == b"dubbed-wave"

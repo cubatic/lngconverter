@@ -167,6 +167,24 @@ class JobStore:
     def audio_path(self, job_id: str) -> Path:
         return Path(self.settings.artifact_dir) / job_id / "source.wav"
 
+    def dubbed_audio_path(self, job_id: str) -> Path:
+        return Path(self.settings.artifact_dir) / job_id / "dubbed.wav"
+
+    def save_dubbed_audio(self, job_id: str, audio: bytes) -> Job | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
+            path = self.dubbed_audio_path(job_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(audio)
+            updated = job.model_copy(
+                update={"has_dubbed_audio": True, "updated_at": datetime.now(UTC)}
+            )
+            self._jobs[job_id] = updated
+            self._persist(updated)
+            return updated.model_copy(deep=True)
+
     def _prepare_remote(self, job_id: str, cancel_event: Event) -> None:
         job = self.get(job_id)
         if not job:
@@ -262,6 +280,7 @@ class JobStore:
             )
             self._persist(self._jobs[job_id])
             self.audio_path(job_id).unlink(missing_ok=True)
+            self.dubbed_audio_path(job_id).unlink(missing_ok=True)
             return self._jobs[job_id].model_copy(deep=True)
 
     def _update(self, job_id: str, **changes) -> None:
