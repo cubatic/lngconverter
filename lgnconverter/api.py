@@ -46,6 +46,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Job not found")
         return job
 
+    @app.post("/v1/jobs/{job_id}/pause", response_model=Job)
+    def pause_job(job_id: str):
+        job = store.pause(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
+
+    @app.post("/v1/jobs/{job_id}/resume", response_model=Job)
+    def resume_job(job_id: str):
+        job = store.resume(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
+
+    @app.post("/v1/jobs/{job_id}/cancel", response_model=Job)
+    def cancel_job(job_id: str):
+        job = store.cancel(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
+
     return app
 
 

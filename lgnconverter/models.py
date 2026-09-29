@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field, HttpUrl
 class JobStatus(str, Enum):
     queued = "queued"
     processing = "processing"
+    paused = "paused"
+    cancelled = "cancelled"
     completed = "completed"
     failed = "failed"
 

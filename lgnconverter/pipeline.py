@@ -2,7 +2,9 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
+from threading import Event
 from urllib.parse import urlparse
 
 from .config import Settings
@@ -14,12 +16,39 @@ class PipelineError(RuntimeError):
     pass
 
 
+class PipelineCancelled(PipelineError):
+    pass
+
+
+def _run_cancellable(command: list[str], timeout: float, cancel_event: Event | None):
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    deadline = time.monotonic() + timeout
+    while process.poll() is None:
+        if cancel_event and cancel_event.is_set():
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            raise PipelineCancelled("Processing paused or cancelled")
+        if time.monotonic() >= deadline:
+            process.kill()
+            process.wait()
+            raise subprocess.TimeoutExpired(command, timeout)
+        time.sleep(0.2)
+    stdout, stderr = process.communicate()
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+    return stdout
+
+
 def extract_audio(
     source: ResolvedSource,
     output_path: Path,
     start_seconds: float,
     duration_seconds: float,
     timeout_seconds: int = 900,
+    cancel_event: Event | None = None,
 ) -> float | None:
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         raise PipelineError("FFmpeg and ffprobe must be installed")
@@ -32,6 +61,7 @@ def extract_audio(
             start_seconds,
             duration_seconds,
             timeout_seconds,
+            cancel_event,
         )
         return _probe_and_validate_duration(
             source, output_path, start_seconds, duration_seconds
@@ -75,13 +105,7 @@ def extract_audio(
         ]
     )
     try:
-        subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
+        _run_cancellable(command, timeout_seconds, cancel_event)
     except subprocess.CalledProcessError as exc:
         raise PipelineError(exc.stderr.strip() or "FFmpeg could not decode the source") from exc
     except subprocess.TimeoutExpired as exc:
@@ -96,6 +120,7 @@ def _extract_youtube_range(
     start_seconds: float,
     duration_seconds: float,
     timeout_seconds: int,
+    cancel_event: Event | None,
 ) -> None:
     end_seconds = start_seconds + duration_seconds
     template = output_path.parent / "youtube-section.%(ext)s"
@@ -119,8 +144,8 @@ def _extract_youtube_range(
         page_url,
     ]
     try:
-        subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout_seconds)
-        subprocess.run(
+        _run_cancellable(command, timeout_seconds, cancel_event)
+        _run_cancellable(
             [
                 "ffmpeg",
                 "-nostdin",
@@ -138,10 +163,8 @@ def _extract_youtube_range(
                 "pcm_s16le",
                 str(output_path),
             ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=90,
+            90,
+            cancel_event,
         )
     except subprocess.CalledProcessError as exc:
         raise PipelineError(exc.stderr.strip() or "YouTube range extraction failed") from exc
@@ -183,7 +206,11 @@ def _probe_and_validate_duration(
     return decoded_duration
 
 
-def transcribe(audio_path: Path, settings: Settings, language: str | None):
+def transcribe(
+    audio_path: Path, settings: Settings, language: str | None, cancel_event: Event | None = None
+):
+    if cancel_event and cancel_event.is_set():
+        raise PipelineCancelled("Processing paused or cancelled")
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
@@ -200,6 +227,8 @@ def transcribe(audio_path: Path, settings: Settings, language: str | None):
         vad_filter=True,
         beam_size=5,
     )
+    if cancel_event and cancel_event.is_set():
+        raise PipelineCancelled("Processing paused or cancelled")
     result = [
         TranscriptSegment(start=segment.start, end=segment.end, text=segment.text.strip())
         for segment in segments

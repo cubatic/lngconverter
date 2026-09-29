@@ -16,22 +16,35 @@
     <input id="duration" type="number" min="1" max="180" value="30" aria-label="Duration seconds">
     <button id="prepare">Prepare Hindi</button>
   </div>
-  <iframe id="player" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+  <div id="player"></div>
   <div id="status">Enter an authorized source URL and press Prepare Hindi.</div><div id="transcript"></div>
 </section></main>
+<script src="https://www.youtube.com/iframe_api"></script>
 <script>
 const e={url:document.querySelector('#url'),start:document.querySelector('#start'),duration:document.querySelector('#duration'),prepare:document.querySelector('#prepare'),player:document.querySelector('#player'),status:document.querySelector('#status'),transcript:document.querySelector('#transcript')};
 function videoId(value){const url=new URL(value);return url.hostname==='youtu.be'?url.pathname.slice(1):url.searchParams.get('v')}
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+let player=null,currentJob=null;
+const apiReady=new Promise(resolve=>{window.onYouTubeIframeAPIReady=resolve});
+async function control(action){if(!currentJob)return;const response=await fetch(`/v1/jobs/${currentJob.id}/${action}`,{method:'POST'});if(response.ok)currentJob=await response.json()}
+async function playerState(event){
+  if(event.data===YT.PlayerState.PAUSED)await control('pause');
+  if(event.data===YT.PlayerState.PLAYING&&currentJob?.status==='paused')await control('resume');
+  if(event.data===YT.PlayerState.ENDED)await control('cancel');
+}
 e.prepare.addEventListener('click',async()=>{e.prepare.disabled=true;e.transcript.replaceChildren();try{
   const sourceUrl=e.url.value.trim(),id=videoId(sourceUrl),start=Number(e.start.value),duration=Number(e.duration.value);
   if(!id)throw new Error('No YouTube video ID found');if(start<0||duration<1||duration>180)throw new Error('Use a duration from 1 to 180 seconds');
-  e.player.src=`https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1&mute=1&start=${Math.floor(start)}`;
+  if(currentJob&&!['completed','failed','cancelled'].includes(currentJob.status))await control('cancel');
+  await apiReady;
+  if(player)player.destroy();
+  player=new YT.Player('player',{videoId:id,playerVars:{autoplay:1,mute:1,start:Math.floor(start)},events:{onReady:event=>{event.target.mute();event.target.playVideo()},onStateChange:playerState}});
   e.status.textContent='Creating processing job…';
   const response=await fetch('/v1/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({source_url:sourceUrl,authorization_confirmed:true,source_language:'zh',target_language:'hi',clip_start_seconds:start,clip_duration_seconds:duration})});
-  if(!response.ok)throw new Error(await response.text());let job=await response.json();
-  while(!['completed','failed'].includes(job.status)){e.status.textContent=`Job ${job.id}\nStatus: ${job.status}\nThe source video is muted while speech is analyzed.`;await wait(3000);job=await(await fetch(`/v1/jobs/${job.id}`)).json()}
-  if(job.status==='failed')throw new Error(job.error);e.status.textContent=`Analysis complete · ${job.duration_seconds.toFixed(2)}s · language ${job.detected_language}`;
+  if(!response.ok)throw new Error(await response.text());currentJob=await response.json();
+  while(!['completed','failed','cancelled'].includes(currentJob.status)){e.status.textContent=`Job ${currentJob.id}\nStatus: ${currentJob.status}\nPause video to pause processing; resume video to continue.`;await wait(3000);currentJob=await(await fetch(`/v1/jobs/${currentJob.id}`)).json()}
+  if(currentJob.status==='failed')throw new Error(currentJob.error);if(currentJob.status==='cancelled'){e.status.textContent='Playback stopped · processing cancelled.';return}
+  const job=currentJob;e.status.textContent=`Analysis complete · ${job.duration_seconds.toFixed(2)}s · language ${job.detected_language}`;
   for(const segment of job.transcript){const row=document.createElement('div'),time=document.createElement('span'),text=document.createElement('span');row.className='segment';time.className='time';time.textContent=`${segment.start.toFixed(2)}–${segment.end.toFixed(2)}`;text.textContent=segment.text;row.append(time,text);e.transcript.append(row)}
 }catch(error){e.status.textContent=`Processing failed: ${error.message}`}finally{e.prepare.disabled=false}});
 </script></body></html>

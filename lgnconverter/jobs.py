@@ -1,12 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from uuid import uuid4
 
 from .config import Settings
 from .models import CreateJobRequest, Job, JobStatus
-from .pipeline import extract_audio, transcribe
+from .pipeline import PipelineCancelled, extract_audio, transcribe
 from .source import resolve_source
 
 
@@ -15,6 +15,7 @@ class JobStore:
         self.settings = settings
         self._jobs: dict[str, Job] = {}
         self._lock = Lock()
+        self._cancel_events: dict[str, Event] = {}
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lgn-pipeline")
 
     def create(self, request: CreateJobRequest) -> Job:
@@ -29,7 +30,9 @@ class JobStore:
         )
         with self._lock:
             self._jobs[job.id] = job
-        self._executor.submit(self._run, job.id)
+            cancel_event = Event()
+            self._cancel_events[job.id] = cancel_event
+        self._executor.submit(self._run, job.id, cancel_event)
         return job.model_copy(deep=True)
 
     def get(self, job_id: str) -> Job | None:
@@ -37,13 +40,55 @@ class JobStore:
             job = self._jobs.get(job_id)
             return job.model_copy(deep=True) if job else None
 
+    def pause(self, job_id: str) -> Job | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
+            if job.status in {JobStatus.queued, JobStatus.processing}:
+                self._cancel_events[job_id].set()
+                self._jobs[job_id] = job.model_copy(
+                    update={"status": JobStatus.paused, "updated_at": datetime.now(UTC)}
+                )
+            return self._jobs[job_id].model_copy(deep=True)
+
+    def resume(self, job_id: str) -> Job | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
+            if job.status != JobStatus.paused:
+                return job.model_copy(deep=True)
+            cancel_event = Event()
+            self._cancel_events[job_id] = cancel_event
+            self._jobs[job_id] = job.model_copy(
+                update={"status": JobStatus.queued, "updated_at": datetime.now(UTC), "error": None}
+            )
+            result = self._jobs[job_id].model_copy(deep=True)
+        self._executor.submit(self._run, job_id, cancel_event)
+        return result
+
+    def cancel(self, job_id: str) -> Job | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return None
+            self._cancel_events[job_id].set()
+            self._jobs[job_id] = job.model_copy(
+                update={"status": JobStatus.cancelled, "updated_at": datetime.now(UTC)}
+            )
+            return self._jobs[job_id].model_copy(deep=True)
+
     def _update(self, job_id: str, **changes) -> None:
         with self._lock:
             job = self._jobs[job_id]
             changes["updated_at"] = datetime.now(UTC)
             self._jobs[job_id] = job.model_copy(update=changes)
 
-    def _run(self, job_id: str) -> None:
+    def _run(self, job_id: str, cancel_event: Event) -> None:
+        with self._lock:
+            if self._cancel_events.get(job_id) is not cancel_event or cancel_event.is_set():
+                return
         self._update(job_id, status=JobStatus.processing)
         job = self.get(job_id)
         assert job is not None
@@ -56,9 +101,10 @@ class JobStore:
                 job.clip_start_seconds,
                 min(job.clip_duration_seconds, self.settings.max_source_seconds),
                 self.settings.decode_timeout_seconds,
+                cancel_event,
             )
             transcript, detected_language = transcribe(
-                audio_path, self.settings, job.source_language
+                audio_path, self.settings, job.source_language, cancel_event
             )
             self._update(
                 job_id,
@@ -69,6 +115,12 @@ class JobStore:
             )
         # A background worker must persist unexpected stage failures on the job
         # instead of silently terminating the executor future.
+        except PipelineCancelled:
+            with self._lock:
+                if self._cancel_events.get(job_id) is cancel_event:
+                    current = self._jobs[job_id]
+                    if current.status not in {JobStatus.paused, JobStatus.cancelled}:
+                        self._jobs[job_id] = current.model_copy(update={"status": JobStatus.paused})
         except Exception as exc:  # noqa: BLE001
             self._update(job_id, status=JobStatus.failed, error=str(exc))
         finally:
