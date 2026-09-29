@@ -2,6 +2,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .config import Settings
 from .models import TranscriptSegment
@@ -24,6 +25,21 @@ def extract_audio(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     command = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
+    if urlparse(source.media_url).scheme in {"http", "https"}:
+        command.extend(
+            [
+                "-reconnect",
+                "1",
+                "-reconnect_streamed",
+                "1",
+                "-reconnect_on_network_error",
+                "1",
+                "-reconnect_on_http_error",
+                "4xx,5xx",
+                "-reconnect_delay_max",
+                "10",
+            ]
+        )
     if source.http_headers:
         header_blob = "".join(f"{key}: {value}\r\n" for key, value in source.http_headers.items())
         command.extend(["-headers", header_blob])
@@ -73,7 +89,15 @@ def extract_audio(
         capture_output=True,
         text=True,
     )
-    return float(json.loads(probe.stdout)["format"]["duration"])
+    decoded_duration = float(json.loads(probe.stdout)["format"]["duration"])
+    if source.duration is not None:
+        expected_duration = min(duration_seconds, max(0, source.duration - start_seconds))
+        if decoded_duration < expected_duration - 1:
+            raise PipelineError(
+                f"Remote stream ended early: expected {expected_duration:.1f}s, "
+                f"received {decoded_duration:.1f}s. Retry the job."
+            )
+    return decoded_duration
 
 
 def transcribe(audio_path: Path, settings: Settings, language: str | None):
