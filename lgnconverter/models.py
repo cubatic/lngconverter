@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -22,6 +23,7 @@ class CreateJobRequest(BaseModel):
     )
     source_language: str | None = Field(default=None, examples=["zh", "ko", "en"])
     target_language: str = "hi"
+    processing_mode: Literal["live", "premium"] = "premium"
     clip_start_seconds: float = Field(default=0, ge=0)
     clip_duration_seconds: float = Field(default=120, gt=0, le=180)
 
@@ -45,6 +47,7 @@ class Job(BaseModel):
     source_url: str
     source_language: str | None = None
     target_language: str = "hi"
+    processing_mode: Literal["live", "premium"] = "premium"
     clip_start_seconds: float = 0
     clip_duration_seconds: float = 120
     detected_language: str | None = None

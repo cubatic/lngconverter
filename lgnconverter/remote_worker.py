@@ -7,6 +7,7 @@ from urllib3.util.retry import Retry
 
 from .config import Settings
 from .dubbing import create_dubbed_audio
+from .live_tts import create_live_dubbed_audio
 from .pipeline import transcribe
 from .translation import translate_to_hindi
 
@@ -68,9 +69,12 @@ class RemoteWorker:
             timings["translation"] = round(time.monotonic() - stage_started, 3)
             if self.settings.enable_tts:
                 dubbed_path = self.work_dir / f"{job_id}-hindi.m4a"
-                timings.update(create_dubbed_audio(
-                    audio_path, hindi_dialogue, dubbed_path, self.settings
-                ))
+                create_audio = (
+                    create_live_dubbed_audio
+                    if job.get("processing_mode") == "live"
+                    else create_dubbed_audio
+                )
+                timings.update(create_audio(audio_path, hindi_dialogue, dubbed_path, self.settings))
                 stage_started = time.monotonic()
                 with dubbed_path.open("rb") as dubbed_file:
                     self._request(

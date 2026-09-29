@@ -67,7 +67,7 @@ async function playerState(event){
 async function createChunk(record,sourceUrl,token){
   if(record.promise)return record.promise;
   record.promise=(async()=>{
-    const response=await apiFetch('/v1/jobs',{method:'POST',headers:{'content-type':'application/json',...authHeaders()},body:JSON.stringify({source_url:sourceUrl,authorization_confirmed:true,source_language:'zh',target_language:'hi',clip_start_seconds:record.start,clip_duration_seconds:record.duration})});
+    const response=await apiFetch('/v1/jobs',{method:'POST',headers:{'content-type':'application/json',...authHeaders()},body:JSON.stringify({source_url:sourceUrl,authorization_confirmed:true,source_language:'zh',target_language:'hi',processing_mode:'live',clip_start_seconds:record.start,clip_duration_seconds:record.duration})});
     if(!response.ok)throw new Error(await response.text());record.job=await response.json();updateStatus();
     while(!terminal.has(record.job.status)){
       await wait(2000);if(token!==runToken)throw new Error('Stopped');

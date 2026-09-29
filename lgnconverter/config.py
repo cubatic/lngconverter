@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     translation_device: str = "cpu"
     enable_tts: bool = False
     tts_model: str = "ai4bharat/indic-parler-tts"
+    live_tts_model: str = "facebook/mms-tts-hin"
     tts_device: str = "auto"
     tts_voice_description: str = (
         "Rani speaks Hindi in a youthful, light female voice. She sounds natural, cinematic "

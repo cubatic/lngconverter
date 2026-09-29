@@ -69,6 +69,7 @@ class JobStore:
             source_url=str(request.source_url),
             source_language=request.source_language,
             target_language=request.target_language,
+            processing_mode=request.processing_mode,
             clip_start_seconds=request.clip_start_seconds,
             clip_duration_seconds=request.clip_duration_seconds,
         )

@@ -6,6 +6,11 @@ and generates a timestamped faster-whisper transcript.
 
 ## Current status
 
+The browser submits `live` jobs by default. Live mode uses the compact
+`facebook/mms-tts-hin` VITS checkpoint and skips Demucs to minimize latency.
+That checkpoint is CC-BY-NC-4.0 and is for prototype/non-commercial testing;
+replace or license the live voice before commercial deployment.
+
 - FastAPI job API
 - explicit source-authorization confirmation
 - direct HTTP(S) and optional YouTube source adapters
