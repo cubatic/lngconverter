@@ -30,7 +30,7 @@ function videoId(value){const url=new URL(value);return url.hostname==='youtu.be
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const terminal=new Set(['completed','failed','cancelled']);
 const chunkSeconds=20,prefetchCount=2;
-let player=null,chunks=[],runToken=0,currentIndex=-1,playbackStarted=false,suppressPauseUntil=0,syncTimer=null;
+let player=null,chunks=[],runToken=0,currentIndex=-1,playbackStarted=false,suppressPauseUntil=0,syncTimer=null,currentSourceUrl='',seekInProgress=false;
 const apiReady=new Promise(resolve=>{window.onYouTubeIframeAPIReady=resolve});
 e.apiKey.value=sessionStorage.getItem('lgnApiKey')||'';
 const authHeaders=()=>({'x-lgn-api-key':e.apiKey.value.trim()});
@@ -85,16 +85,28 @@ function renderTranscript(record){
     text.textContent=translated?`${segment.text}\n${translated}`:segment.text;text.style.whiteSpace='pre-line';row.append(time,text);e.transcript.append(row);
   }
 }
-async function playChunk(index,token){
+async function playChunk(index,token,offset=0){
   if(token!==runToken)return;
   if(index>=chunks.length){e.status.textContent='Hindi playback complete.';e.stop.disabled=true;e.prepare.disabled=false;playbackStarted=false;return}
   currentIndex=index;const record=chunks[index];
   if(index>0){suppressPauseUntil=Date.now()+1500;player.pauseVideo()}
   if(!record.audioUrl)updateStatus(`Buffering chunk ${index+1}…`);
   if(!record.audioUrl)await record.promise;if(token!==runToken)return;
-  e.dubbed.src=record.audioUrl;e.dubbed.hidden=false;e.dubbed.currentTime=0;
-  suppressPauseUntil=Date.now()+1500;player.getIframe().style.pointerEvents='auto';player.seekTo(record.start,true);playbackStarted=true;const audioPlay=e.dubbed.play();player.playVideo();await audioPlay;updateStatus(`Playing chunk ${index+1}/${chunks.length}`);
+  e.dubbed.src=record.audioUrl;e.dubbed.hidden=false;e.dubbed.currentTime=Math.max(0,Math.min(offset,record.duration-.1));
+  suppressPauseUntil=Date.now()+1500;player.getIframe().style.pointerEvents='auto';player.seekTo(record.start+e.dubbed.currentTime,true);playbackStarted=true;const audioPlay=e.dubbed.play();player.playVideo();await audioPlay;updateStatus(`Playing chunk ${index+1}/${chunks.length}`);
   e.dubbed.onended=()=>playChunk(index+1,token).catch(error=>failRun(error,token));
+}
+async function handleSeek(targetTime,token){
+  if(seekInProgress||token!==runToken||!chunks.length)return;
+  const first=chunks[0].start,last=first+chunks.reduce((sum,record)=>sum+record.duration,0);
+  if(targetTime<first||targetTime>=last){suppressPauseUntil=Date.now()+1000;player.seekTo(first,true);updateStatus(`Seek between ${first.toFixed(0)}s and ${last.toFixed(0)}s.`);return}
+  seekInProgress=true;const targetIndex=Math.min(chunks.length-1,Math.floor((targetTime-first)/chunkSeconds));const target=chunks[targetIndex],offset=targetTime-target.start;
+  try{
+    if(targetIndex===currentIndex&&target.audioUrl){e.dubbed.currentTime=Math.max(0,Math.min(offset,target.duration-.1));updateStatus(`Moved to ${targetTime.toFixed(1)}s`);return}
+    playbackStarted=false;e.dubbed.pause();suppressPauseUntil=Date.now()+1500;player.pauseVideo();player.getIframe().style.pointerEvents='none';updateStatus(`Preparing Hindi at ${targetTime.toFixed(1)}s…`);
+    await createChunk(target,currentSourceUrl,token);if(targetIndex+1<chunks.length)createChunk(chunks[targetIndex+1],currentSourceUrl,token).catch(error=>failRun(error,token));
+    if(token!==runToken)return;await playChunk(targetIndex,token,offset);
+  }finally{seekInProgress=false}
 }
 async function stopRun(showStatus=true){
   const oldToken=runToken++;playbackStarted=false;currentIndex=-1;clearInterval(syncTimer);syncTimer=null;e.dubbed.pause();e.dubbed.removeAttribute('src');e.dubbed.load();
@@ -106,14 +118,14 @@ function failRun(error,token){if(token!==runToken||error.message==='Stopped')ret
 e.stop.addEventListener('click',()=>stopRun());
 e.playHindi.addEventListener('click',()=>{e.playHindi.disabled=true;playChunk(0,runToken).catch(error=>failRun(error,runToken))});
 e.prepare.addEventListener('click',async()=>{await stopRun(false);e.prepare.disabled=true;e.stop.disabled=false;e.transcript.replaceChildren();try{
-  const sourceUrl=e.url.value.trim(),id=videoId(sourceUrl),start=Number(e.start.value),duration=Number(e.duration.value);
+  const sourceUrl=e.url.value.trim(),id=videoId(sourceUrl),start=Number(e.start.value),duration=Number(e.duration.value);currentSourceUrl=sourceUrl;
   if(!e.apiKey.value.trim())throw new Error('Access key is required');sessionStorage.setItem('lgnApiKey',e.apiKey.value.trim());
   if(!id)throw new Error('No YouTube video ID found');if(start<0||duration<1||duration>180)throw new Error('Use a duration from 1 to 180 seconds');
   const token=runToken;for(let offset=0,index=0;offset<duration;offset+=chunkSeconds,index++)chunks.push({index,start:start+offset,duration:Math.min(chunkSeconds,duration-offset),job:null,promise:null,audioUrl:null});
   await apiReady;if(player)player.destroy();
   await new Promise(resolve=>{player=new YT.Player('player',{videoId:id,playerVars:{autoplay:0,mute:1,start:Math.floor(start)},events:{onReady:event=>{suppressPauseUntil=Date.now()+1000;event.target.mute();event.target.pauseVideo();event.target.getIframe().style.pointerEvents='none';resolve()},onStateChange:playerState}})});
   e.status.textContent='Preparing first Hindi chunk…';for(let index=0;index<Math.min(prefetchCount,chunks.length);index++)createChunk(chunks[index],sourceUrl,token).catch(error=>failRun(error,token));
-  syncTimer=setInterval(()=>{if(!playbackStarted||e.dubbed.paused||currentIndex<0)return;const expected=chunks[currentIndex].start+e.dubbed.currentTime;if(Math.abs(player.getCurrentTime()-expected)>.75)player.seekTo(expected,true)},1000);
+  syncTimer=setInterval(()=>{if(!playbackStarted||e.dubbed.paused||currentIndex<0||seekInProgress)return;const expected=chunks[currentIndex].start+e.dubbed.currentTime,target=player.getCurrentTime(),drift=target-expected;if(Math.abs(drift)>2)handleSeek(target,runToken).catch(error=>failRun(error,runToken));else if(Math.abs(drift)>.75)player.seekTo(expected,true)},500);
   await chunks[0].promise;if(token!==runToken)return;e.playHindi.disabled=false;e.prepare.disabled=false;e.status.textContent='First Hindi chunk ready — press Play Hindi.';
 }catch(error){failRun(error,runToken)}});
 </script></body></html>
