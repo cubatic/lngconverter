@@ -147,7 +147,8 @@ def create_dubbed_audio(
     )
     inputs = ["-i", str(background)]
     filter_parts: list[str] = []
-    mix_labels = ["[0:a]"]
+    filter_parts.append(f"[0:a]volume={settings.background_volume:.3f}[background]")
+    mix_labels = ["[background]"]
     for index, segment in enumerate(dialogue, start=1):
         raw = work_dir / f"speech-{index:03d}-raw.wav"
         fitted = work_dir / f"speech-{index:03d}.wav"
@@ -156,7 +157,11 @@ def create_dubbed_audio(
         inputs.extend(["-i", str(fitted)])
         delay_ms = max(0, round(segment.start * 1000))
         label = f"voice{index}"
-        filter_parts.append(f"[{index}:a]adelay={delay_ms}|{delay_ms}[{label}]")
+        filter_parts.append(
+            f"[{index}:a]volume={settings.dialogue_volume:.3f},"
+            f"acompressor=threshold=0.12:ratio=3:attack=5:release=80,"
+            f"adelay={delay_ms}|{delay_ms}[{label}]"
+        )
         mix_labels.append(f"[{label}]")
     filter_parts.append(
         "".join(mix_labels)

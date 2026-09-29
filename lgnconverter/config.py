@@ -26,6 +26,8 @@ class Settings(BaseSettings):
         "The recording is very high quality, close-sounding, and has no background noise."
     )
     enable_source_separation: bool = False
+    background_volume: float = 0.35
+    dialogue_volume: float = 1.8
     api_key: str = ""
     worker_api_key: str = ""
     ingest_api_key: str = ""
