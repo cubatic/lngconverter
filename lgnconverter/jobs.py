@@ -38,7 +38,7 @@ class JobStore:
             rows = connection.execute("SELECT payload FROM jobs").fetchall()
         for (payload,) in rows:
             job = Job.model_validate_json(payload)
-            if job.status in {JobStatus.queued, JobStatus.processing}:
+            if job.status in {JobStatus.ingesting, JobStatus.queued, JobStatus.processing}:
                 job = job.model_copy(update={"status": JobStatus.paused})
             self._jobs[job.id] = job
             self._cancel_events[job.id] = Event()
@@ -55,7 +55,11 @@ class JobStore:
     def create(self, request: CreateJobRequest) -> Job:
         job = Job(
             id=uuid4().hex,
-            status=JobStatus.queued,
+            status=(
+                JobStatus.ingesting
+                if self.settings.execution_mode == "remote"
+                else JobStatus.queued
+            ),
             source_url=str(request.source_url),
             source_language=request.source_language,
             target_language=request.target_language,
@@ -69,6 +73,8 @@ class JobStore:
             self._persist(job)
         if self.settings.execution_mode == "local":
             self._executor.submit(self._run, job.id, cancel_event)
+        else:
+            self._executor.submit(self._prepare_remote, job.id, cancel_event)
         return job.model_copy(deep=True)
 
     def get(self, job_id: str) -> Job | None:
@@ -81,7 +87,7 @@ class JobStore:
             job = self._jobs.get(job_id)
             if not job:
                 return None
-            if job.status in {JobStatus.queued, JobStatus.processing}:
+            if job.status in {JobStatus.ingesting, JobStatus.queued, JobStatus.processing}:
                 self._cancel_events[job_id].set()
                 self._jobs[job_id] = job.model_copy(
                     update={"status": JobStatus.paused, "updated_at": datetime.now(UTC)}
@@ -98,14 +104,55 @@ class JobStore:
                 return job.model_copy(deep=True)
             cancel_event = Event()
             self._cancel_events[job_id] = cancel_event
+            next_status = (
+                JobStatus.queued
+                if self.audio_path(job_id).exists()
+                else JobStatus.ingesting
+            )
             self._jobs[job_id] = job.model_copy(
-                update={"status": JobStatus.queued, "updated_at": datetime.now(UTC), "error": None}
+                update={"status": next_status, "updated_at": datetime.now(UTC), "error": None}
             )
             self._persist(self._jobs[job_id])
             result = self._jobs[job_id].model_copy(deep=True)
         if self.settings.execution_mode == "local":
             self._executor.submit(self._run, job_id, cancel_event)
+        elif result.status == JobStatus.ingesting:
+            self._executor.submit(self._prepare_remote, job_id, cancel_event)
         return result
+
+    def audio_path(self, job_id: str) -> Path:
+        return Path(self.settings.artifact_dir) / job_id / "source.wav"
+
+    def _prepare_remote(self, job_id: str, cancel_event: Event) -> None:
+        job = self.get(job_id)
+        if not job:
+            return
+        try:
+            source = resolve_source(job.source_url, self.settings)
+            duration = extract_audio(
+                source,
+                self.audio_path(job_id),
+                job.clip_start_seconds,
+                min(job.clip_duration_seconds, self.settings.max_source_seconds),
+                self.settings.decode_timeout_seconds,
+                cancel_event,
+            )
+            with self._lock:
+                if self._cancel_events.get(job_id) is cancel_event and not cancel_event.is_set():
+                    current = self._jobs[job_id]
+                    queued = current.model_copy(
+                        update={
+                            "status": JobStatus.queued,
+                            "duration_seconds": duration,
+                            "updated_at": datetime.now(UTC),
+                        }
+                    )
+                    self._jobs[job_id] = queued
+                    self._persist(queued)
+        except PipelineCancelled:
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._update(job_id, status=JobStatus.failed, error=str(exc))
 
     def claim(self) -> Job | None:
         with self._lock:
@@ -141,6 +188,7 @@ class JobStore:
             )
             self._jobs[job_id] = completed
             self._persist(completed)
+            self.audio_path(job_id).unlink(missing_ok=True)
             return completed.model_copy(deep=True)
 
     def fail_remote(self, job_id: str, error: str) -> Job | None:
@@ -169,6 +217,7 @@ class JobStore:
                 update={"status": JobStatus.cancelled, "updated_at": datetime.now(UTC)}
             )
             self._persist(self._jobs[job_id])
+            self.audio_path(job_id).unlink(missing_ok=True)
             return self._jobs[job_id].model_copy(deep=True)
 
     def _update(self, job_id: str, **changes) -> None:

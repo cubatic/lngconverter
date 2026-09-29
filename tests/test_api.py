@@ -1,3 +1,6 @@
+import time
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
 from lgnconverter.api import create_app
@@ -58,23 +61,33 @@ def test_remote_worker_claims_and_completes_job(tmp_path):
             )
         )
     )
-    created = client.post(
-        "/v1/jobs",
-        headers={"x-lgn-api-key": "client-key"},
-        json={
-            "source_url": "https://youtu.be/authorized",
-            "authorization_confirmed": True,
-            "source_language": "zh",
-        },
-    )
-    assert created.status_code == 202
-    job_id = created.json()["id"]
-
-    denied = client.post("/v1/worker/jobs/claim")
-    assert denied.status_code == 401
-    claimed = client.post(
-        "/v1/worker/jobs/claim", headers={"x-lgn-worker-key": "worker-key"}
-    )
+    with (
+        patch("lgnconverter.jobs.resolve_source"),
+        patch("lgnconverter.jobs.extract_audio", return_value=2),
+    ):
+        created = client.post(
+            "/v1/jobs",
+            headers={"x-lgn-api-key": "client-key"},
+            json={
+                "source_url": "https://youtu.be/authorized",
+                "authorization_confirmed": True,
+                "source_language": "zh",
+            },
+        )
+        assert created.status_code == 202
+        job_id = created.json()["id"]
+        denied = client.post("/v1/worker/jobs/claim")
+        assert denied.status_code == 401
+        claimed = None
+        for _ in range(20):
+            response = client.post(
+                "/v1/worker/jobs/claim", headers={"x-lgn-worker-key": "worker-key"}
+            )
+            if response.json() is not None:
+                claimed = response
+                break
+            time.sleep(0.01)
+    assert claimed is not None
     assert claimed.status_code == 200
     assert claimed.json()["id"] == job_id
     assert claimed.json()["status"] == "processing"

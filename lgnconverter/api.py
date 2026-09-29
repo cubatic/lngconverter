@@ -103,6 +103,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def claim_worker_job():
         return store.claim()
 
+    @app.get(
+        "/v1/worker/jobs/{job_id}/audio",
+        dependencies=[Depends(require_worker_key)],
+        response_class=FileResponse,
+    )
+    def download_worker_audio(job_id: str):
+        job = store.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        audio_path = store.audio_path(job_id)
+        if not audio_path.is_file():
+            raise HTTPException(status_code=409, detail="Audio is not ready")
+        return FileResponse(audio_path, media_type="audio/wav", filename=f"{job_id}.wav")
+
+    @app.get(
+        "/v1/worker/jobs/{job_id}",
+        response_model=Job,
+        dependencies=[Depends(require_worker_key)],
+    )
+    def get_worker_job(job_id: str):
+        job = store.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
+
     @app.post(
         "/v1/worker/jobs/{job_id}/complete",
         response_model=Job,
