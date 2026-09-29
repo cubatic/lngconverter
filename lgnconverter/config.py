@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     max_source_seconds: int = 180
     decode_timeout_seconds: int = 900
     keep_audio_artifacts: bool = True
+    max_capture_bytes: int = 20 * 1024 * 1024
 
 
 @lru_cache

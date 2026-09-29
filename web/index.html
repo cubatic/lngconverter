@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LGN Converter – Capture Test</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+    body { margin: 0; background: #090d18; color: #edf2ff; }
+    main { width: min(900px, calc(100% - 32px)); margin: 40px auto; }
+    .panel { background: #12192a; border: 1px solid #29324a; border-radius: 18px; padding: 24px; }
+    h1 { margin-top: 0; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    input { flex: 1; min-width: 260px; background: #090d18; color: inherit; border: 1px solid #3b4662; border-radius: 10px; padding: 12px; }
+    button { border: 0; border-radius: 10px; padding: 12px 16px; font-weight: 700; cursor: pointer; }
+    button.primary { background: #6d7cff; color: white; }
+    button.capture { background: #22c58b; color: #06130e; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    iframe { width: 100%; aspect-ratio: 16/9; border: 0; border-radius: 12px; margin-top: 18px; background: black; }
+    #status { margin-top: 16px; padding: 12px; background: #090d18; border-radius: 10px; white-space: pre-wrap; }
+    .hint { color: #aeb8cf; line-height: 1.5; }
+  </style>
+</head>
+<body>
+<main>
+  <section class="panel">
+    <h1>Hindi dubbing capture test</h1>
+    <p class="hint">Load an authorized YouTube URL. Start playback, then capture this tab for 15 seconds and make sure <b>Share tab audio</b> is enabled.</p>
+    <div class="row">
+      <input id="url" value="https://www.youtube.com/watch?v=4tk4uI5BzTw" aria-label="YouTube URL">
+      <button class="primary" id="load">Load video</button>
+      <button class="capture" id="capture" disabled>Capture 15s</button>
+    </div>
+    <iframe id="player" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+    <div id="status">Load the video to begin.</div>
+  </section>
+</main>
+<script>
+  const urlInput = document.querySelector('#url');
+  const player = document.querySelector('#player');
+  const statusBox = document.querySelector('#status');
+  const captureButton = document.querySelector('#capture');
+
+  function videoId(value) {
+    const url = new URL(value);
+    return url.hostname === 'youtu.be' ? url.pathname.slice(1) : url.searchParams.get('v');
+  }
+
+  document.querySelector('#load').addEventListener('click', () => {
+    try {
+      const id = videoId(urlInput.value.trim());
+      if (!id) throw new Error('No video ID found');
+      player.src = `https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1`;
+      captureButton.disabled = false;
+      statusBox.textContent = 'Video loaded. Start playback, then click Capture 15s.';
+    } catch (error) {
+      statusBox.textContent = `Invalid URL: ${error.message}`;
+    }
+  });
+
+  captureButton.addEventListener('click', async () => {
+    captureButton.disabled = true;
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({video: true, audio: true});
+      if (!stream.getAudioTracks().length) throw new Error('No tab audio shared. Enable Share tab audio.');
+      const sessionResponse = await fetch('/v1/capture-sessions', {method: 'POST'});
+      const {session_id: sessionId} = await sessionResponse.json();
+      const audioOnly = new MediaStream(stream.getAudioTracks());
+      const recorder = new MediaRecorder(audioOnly, {mimeType: 'audio/webm;codecs=opus'});
+      const parts = [];
+      recorder.addEventListener('dataavailable', event => { if (event.data.size) parts.push(event.data); });
+      const stopped = new Promise(resolve => recorder.addEventListener('stop', resolve, {once: true}));
+      recorder.start();
+      statusBox.textContent = 'Capturing tab audio… 15 seconds remaining.';
+      for (let remaining = 14; remaining >= 0; remaining--) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        statusBox.textContent = `Capturing tab audio… ${remaining} seconds remaining.`;
+      }
+      recorder.stop();
+      await stopped;
+      const blob = new Blob(parts, {type: 'audio/webm'});
+      const response = await fetch(`/v1/capture-sessions/${sessionId}/chunks/0`, {
+        method: 'POST', headers: {'content-type': blob.type}, body: blob
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const result = await response.json();
+      statusBox.textContent = `Capture uploaded successfully.\nSession: ${sessionId}\nBytes: ${result.bytes}`;
+    } catch (error) {
+      statusBox.textContent = `Capture failed: ${error.message}`;
+    } finally {
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      captureButton.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
