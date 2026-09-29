@@ -2,6 +2,8 @@ import time
 from pathlib import Path
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from .config import Settings
 from .dubbing import create_dubbed_audio
@@ -17,6 +19,18 @@ class RemoteWorker:
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.session = requests.Session()
         self.session.headers["x-lgn-worker-key"] = worker_key
+        self.session.mount(
+            "https://",
+            HTTPAdapter(
+                max_retries=Retry(
+                    total=3,
+                    connect=3,
+                    read=3,
+                    backoff_factor=1,
+                    allowed_methods={"GET"},
+                )
+            ),
+        )
 
     def _request(self, method: str, path: str, **kwargs):
         response = self.session.request(method, f"{self.server_url}{path}", timeout=120, **kwargs)
