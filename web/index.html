@@ -80,7 +80,8 @@ function renderTranscript(record){
   }
 }
 async function playChunk(index,token){
-  if(index>=chunks.length||token!==runToken){await stopRun(false);return}
+  if(token!==runToken)return;
+  if(index>=chunks.length){e.status.textContent='Hindi playback complete.';e.stop.disabled=true;e.prepare.disabled=false;playbackStarted=false;return}
   currentIndex=index;const record=chunks[index];
   if(index>0){suppressPauseUntil=Date.now()+1500;player.pauseVideo()}
   if(!record.audioUrl)updateStatus(`Buffering chunk ${index+1}…`);
@@ -103,7 +104,7 @@ e.prepare.addEventListener('click',async()=>{await stopRun(false);e.prepare.disa
   if(!id)throw new Error('No YouTube video ID found');if(start<0||duration<1||duration>180)throw new Error('Use a duration from 1 to 180 seconds');
   const token=runToken;for(let offset=0,index=0;offset<duration;offset+=chunkSeconds,index++)chunks.push({index,start:start+offset,duration:Math.min(chunkSeconds,duration-offset),job:null,promise:null,audioUrl:null});
   await apiReady;if(player)player.destroy();
-  await new Promise(resolve=>{player=new YT.Player('player',{videoId:id,playerVars:{autoplay:0,mute:1,start:Math.floor(start)},events:{onReady:event=>{event.target.mute();event.target.pauseVideo();resolve()},onStateChange:playerState}})});
+  await new Promise(resolve=>{player=new YT.Player('player',{videoId:id,playerVars:{autoplay:0,mute:1,start:Math.floor(start)},events:{onReady:event=>{suppressPauseUntil=Date.now()+1000;event.target.mute();event.target.pauseVideo();resolve()},onStateChange:playerState}})});
   e.status.textContent='Preparing first Hindi chunk…';for(let index=0;index<Math.min(prefetchCount,chunks.length);index++)createChunk(chunks[index],sourceUrl,token).catch(error=>failRun(error,token));
   syncTimer=setInterval(()=>{if(!playbackStarted||e.dubbed.paused||currentIndex<0)return;const expected=chunks[currentIndex].start+e.dubbed.currentTime;if(Math.abs(player.getCurrentTime()-expected)>.75)player.seekTo(expected,true)},1000);
   await playChunk(0,token);
