@@ -28,7 +28,7 @@ function videoId(value){const url=new URL(value);return url.hostname==='youtu.be
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const terminal=new Set(['completed','failed','cancelled']);
 const chunkSeconds=10,prefetchCount=3;
-let player=null,chunks=[],runToken=0,currentIndex=-1,playbackStarted=false,suppressPauseUntil=0,syncTimer=null,currentSourceUrl='',seekInProgress=false;
+let player=null,chunks=[],runToken=0,playSequence=0,currentIndex=-1,playbackStarted=false,suppressPauseUntil=0,syncTimer=null,currentSourceUrl='',seekInProgress=false;
 const apiReady=new Promise(resolve=>{window.onYouTubeIframeAPIReady=resolve});
 e.apiKey.value=sessionStorage.getItem('lgnApiKey')||'';
 const authHeaders=()=>({'x-lgn-api-key':e.apiKey.value.trim()});
@@ -96,16 +96,16 @@ function renderTranscript(record){
     text.textContent=translated?`${segment.text}\n${translated}`:segment.text;text.style.whiteSpace='pre-line';row.append(time,text);e.transcript.append(row);
   }
 }
-async function playChunk(index,token,offset=0){
-  if(token!==runToken)return;
+async function playChunk(index,token,offset=0,sequence=playSequence){
+  if(token!==runToken||sequence!==playSequence)return;
   if(index>=chunks.length){setLoading(false);e.status.textContent='Hindi playback complete.';e.stop.disabled=true;e.prepare.disabled=false;playbackStarted=false;return}
   currentIndex=index;const record=chunks[index];
   if(index>0){suppressPauseUntil=Date.now()+1500;player.pauseVideo()}
   if(!record.audioUrl){setLoading(true,'अगला Hindi हिस्सा तैयार हो रहा है…');updateStatus(`Buffering chunk ${index+1}…`)}
-  if(!record.audioUrl)await record.promise;if(token!==runToken)return;
+  if(!record.audioUrl)await record.promise;if(token!==runToken||sequence!==playSequence)return;
   e.dubbed.src=record.audioUrl;e.dubbed.hidden=false;e.dubbed.currentTime=Math.max(0,Math.min(offset,record.duration-.1));
   suppressPauseUntil=Date.now()+1500;player.getIframe().style.pointerEvents='auto';player.seekTo(record.start+e.dubbed.currentTime,true);playbackStarted=true;const audioPlay=e.dubbed.play();player.playVideo();await audioPlay;setLoading(false);e.prepare.disabled=false;updateStatus(`Playing chunk ${index+1}/${chunks.length}`);
-  e.dubbed.onended=()=>playChunk(index+1,token).catch(error=>failRun(error,token));
+  e.dubbed.onended=()=>playChunk(index+1,token,0,sequence).catch(error=>failRun(error,token));
 }
 async function handleSeek(targetTime,token){
   if(seekInProgress||token!==runToken||!chunks.length)return;
@@ -114,13 +114,14 @@ async function handleSeek(targetTime,token){
   seekInProgress=true;const targetIndex=Math.min(chunks.length-1,Math.floor((targetTime-first)/chunkSeconds));const target=chunks[targetIndex],offset=targetTime-target.start;
   try{
     if(targetIndex===currentIndex&&target.audioUrl){e.dubbed.currentTime=Math.max(0,Math.min(offset,target.duration-.1));updateStatus(`Moved to ${targetTime.toFixed(1)}s`);return}
+    const sequence=++playSequence;
     playbackStarted=false;e.dubbed.pause();suppressPauseUntil=Date.now()+1500;player.pauseVideo();player.getIframe().style.pointerEvents='none';updateStatus(`Preparing Hindi at ${targetTime.toFixed(1)}s…`);
     await createChunk(target,currentSourceUrl,token);if(targetIndex+1<chunks.length)createChunk(chunks[targetIndex+1],currentSourceUrl,token).catch(error=>failRun(error,token));
-    if(token!==runToken)return;await playChunk(targetIndex,token,offset);
+    if(token!==runToken||sequence!==playSequence)return;await playChunk(targetIndex,token,offset,sequence);
   }finally{seekInProgress=false}
 }
 async function stopRun(showStatus=true){
-  const oldToken=runToken++;playbackStarted=false;currentIndex=-1;clearInterval(syncTimer);syncTimer=null;e.dubbed.pause();e.dubbed.removeAttribute('src');e.dubbed.load();
+  const oldToken=runToken++;playSequence++;playbackStarted=false;currentIndex=-1;clearInterval(syncTimer);syncTimer=null;e.dubbed.pause();e.dubbed.removeAttribute('src');e.dubbed.load();
   if(player){suppressPauseUntil=Date.now()+1000;player.pauseVideo()}
   await controlActive('cancel');for(const record of chunks)if(record.audioUrl)URL.revokeObjectURL(record.audioUrl);
   chunks=[];setLoading(false);e.stop.disabled=true;e.prepare.disabled=false;if(showStatus&&oldToken)e.status.textContent='Stopped · queued GPU work cancelled.';
